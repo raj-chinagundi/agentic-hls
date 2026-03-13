@@ -1,6 +1,6 @@
 from langchain_core.tools import tool
 from langchain_core.tools import StructuredTool
-from typing import Optional, Type, TypedDict
+from typing import Optional, Type, TypedDict, ClassVar
 from pydantic import BaseModel, Field
 from langchain_core.callbacks import (
     AsyncCallbackManagerForToolRun,
@@ -83,10 +83,10 @@ class AutoAnalysisInput(BaseModel):
 
 
 class AutoAnalysisTool(BaseTool):
-    name = "Auto Code Analysis Tool"
-    description = "Used to call the gprof tool to generate performance reports, analyze the reports using LLM, and output various performance indicators"
-    args_schema: Type[BaseModel] = AutoAnalysisInput
-    return_direct: bool = True
+    name: ClassVar[str] = "Auto Code Analysis Tool"
+    description: ClassVar[str] = "Used to call the gprof tool to generate performance reports, analyze the reports using LLM, and output various performance indicators"
+    args_schema: ClassVar[Type[BaseModel]] = AutoAnalysisInput
+    return_direct: ClassVar[bool] = True
 
     def _run(
         self, application: str, run_manager: Optional[CallbackManagerForToolRun] = None
