@@ -159,13 +159,15 @@ def task_pipeline_node(state: GraphState) -> GraphState:
     chat_file_path = pipeline_dir / f"pipeline_{model_name}_{app}_{cur_time}.txt"
     code_file_path = pipeline_dir / f"pipeline_{model_name}_{app}_{cur_time}.cpp"
 
-    chat_text = str(chat_completion)
+    chat_text = chat_completion.content if hasattr(chat_completion, "content") else str(chat_completion)
+    if not isinstance(chat_text, str):
+        chat_text = str(chat_text)
     with open(chat_file_path, 'w') as chat_file:
         chat_file.write(chat_text)
         chat_file.write("\n\n====================================\n\n")
         chat_file.write(prompt_complete)
 
-    content = chat_completion.content if isinstance(chat_completion.content, str) else str(chat_completion.content)
+    content = chat_text
     match = re.search(r"\`\`\`(.*?)\`\`\`", content, re.DOTALL)
     if match:
         extracted_code = match.group(1)
