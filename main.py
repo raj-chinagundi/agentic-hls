@@ -436,18 +436,18 @@ def _write_hls_tcl(mode: str, tcl_path: Path, source_cpp: str, include_dir: str,
     lines = [
         'open_project -reset project',
         f'set_top {top_function}',
-        f'add_files {abs_source} -cflags "-I{abs_include}"',
+        f'add_files {abs_source} -cflags "-I{abs_include} -fno-lto"',
     ]
     if mode == "csim" and tb_cpp:
         abs_tb = str(Path(tb_cpp).resolve())
-        lines.append(f'add_files -tb {abs_tb} -cflags "-I{abs_include}"')
+        lines.append(f'add_files -tb {abs_tb} -cflags "-I{abs_include} -fno-lto"')
     lines += [
         'open_solution -reset solution1',
         f'set_part {{{fpga_part}}}',
         f'create_clock -period {clock_period} -name default',
     ]
     if mode == "csim":
-        lines.append('csim_design')
+        lines.append('csim_design -ldflags "-fno-lto"')
     else:
         lines.append('csynth_design')
     lines.append('exit')
