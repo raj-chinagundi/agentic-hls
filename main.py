@@ -286,7 +286,8 @@ def task_opt_node(state: GraphState) -> GraphState:
             stage_code = ""
 
     choose_prompt = _gen_stage_opt_prompt(stage_code)
-    chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
+    chat_model = ChatOpenAI(model='gpt-4o')
+    #chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
     choose_response = chat_model.invoke([HumanMessage(content=choose_prompt)])
     choose_text = choose_response.content if hasattr(choose_response, "content") else str(choose_response)
     if not isinstance(choose_text, str):
