@@ -114,7 +114,8 @@ def analysis_report(app, report_content):
     PROMPT_COMPLETE += _CODE_ANALYSIS_PROMPT
     print(PROMPT_COMPLETE)
 
-    chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
+    #chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
+    chat_model = ChatOpenAI(model='gpt-4o')
     messages = [
         HumanMessage(content=PROMPT_COMPLETE),
     ]
@@ -207,7 +208,8 @@ def task_pipeline_node(state: GraphState) -> GraphState:
         prompt_complete += "\n\nBottleneck analysis report:\n" + bottleneck_content
     prompt_complete += TASK_PIPELINE_STRATEGY_PROMPT_4
 
-    chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
+    #chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
+    chat_model = ChatOpenAI(model='gpt-4o')
     chat_completion = chat_model.invoke([HumanMessage(content=prompt_complete)])
 
     model_name = "gpt3.5"
@@ -330,7 +332,8 @@ def _apply_opt(stage_code: str, stage_opt_list, algo_name: str, func_description
         apply_prompt += csim_error_log
 
     full_prompt = _SYSTEM_PROMPT + apply_prompt
-    chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
+    #chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
+    chat_model = ChatOpenAI(model='gpt-4o')
     response = chat_model.invoke([HumanMessage(content=full_prompt)])
     response_text = _normalize_response_text(response)
     code_path = _save_stage_opt_output("opt_apply", full_prompt, response_text, model_name, algo_name)
@@ -358,7 +361,8 @@ def task_opt_node(state: GraphState) -> GraphState:
                 stage_code = ""
 
     choose_prompt = _gen_stage_opt_prompt(stage_code, csim_error_log)
-    chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
+    #chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
+    chat_model = ChatOpenAI(model='gpt-4o')
     choose_response = chat_model.invoke([HumanMessage(content=choose_prompt)])
     choose_text = _normalize_response_text(choose_response)
     _save_stage_opt_output("opt_choose", choose_prompt, choose_text, model_name, algo_name)
