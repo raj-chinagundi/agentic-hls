@@ -26,8 +26,8 @@ clock_period = "3.33"
 max_task_opt_retries = 3
 
 # LLM config — change provider and model here, nothing else needs to be touched
-llm_provider = "openrouter"   # "openai" | "openrouter"
-llm_model = "stepfun/step-3.5-flash:free"
+llm_provider = "openai"   # "openai" | "openrouter"
+llm_model = "gpt-4o"
 llm_model_safe = re.sub(r'[/:\\"\' ]', "_", llm_model)
 
 
@@ -56,6 +56,37 @@ def _strip_markdown_language_tag(extracted_code: str) -> str:
     if first_line.strip().lower() in {"cpp", "c++", "c", "cc", "hpp", "h"}:
         return rest
     return extracted_code
+
+
+def _strip_main_function(code: str) -> str:
+    """Remove int main() { ... } from LLM-generated code.
+
+    The design file should only contain the synthesizable function.
+    main() belongs in the test bench, not the design source.
+    """
+    # Match 'int main()' or 'int main(void)' with its entire brace-delimited body
+    pattern = r'\n*\s*int\s+main\s*\([^)]*\)\s*\{' 
+    match = re.search(pattern, code)
+    if not match:
+        return code
+    # Find the matching closing brace by counting braces
+    start = match.start()
+    brace_count = 0
+    i = match.end() - 1  # position of the opening '{'
+    while i < len(code):
+        if code[i] == '{':
+            brace_count += 1
+        elif code[i] == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                # Remove from start of main to end of closing brace
+                stripped = code[:start].rstrip() + "\n"
+                remaining = code[i + 1:].strip()
+                if remaining:
+                    stripped += remaining + "\n"
+                return stripped
+        i += 1
+    return code
 
 
 def _get_or_create_run_timestamp(state: dict) -> str:
@@ -284,6 +315,7 @@ def _save_stage_opt_output(completion_type: str, prompt_content: str, response_t
         match = re.search(r"\`\`\`(.*?)\`\`\`", response_text, re.DOTALL)
         if match:
             extracted_code = _strip_markdown_language_tag(match.group(1))
+            extracted_code = _strip_main_function(extracted_code)
             code_file_path.write_text(extracted_code, encoding="utf-8")
             code_path = str(code_file_path)
     return code_path
