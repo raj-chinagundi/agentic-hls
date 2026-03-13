@@ -20,13 +20,7 @@ from prompts.task_opt_prompt import *
 """ environment set up """
 load_dotenv()
 benchmark_path = "benchmark"
-hls_setup_command = (
-    "module load xilinx/vitis-2022.1 && /data/sse/fpga/amd/scripts/fpga_env.sh"
-    " && export __HLS_GCC_WRAP=$(mktemp -d)"
-    ' && printf \'#!/bin/bash\\nexec /usr/bin/g++ -fno-lto "$@"\\n\' > $__HLS_GCC_WRAP/g++'
-    " && chmod +x $__HLS_GCC_WRAP/g++"
-    " && export PATH=$__HLS_GCC_WRAP:$PATH"
-)
+hls_setup_command = "module load xilinx/vitis-2022.1 && /data/sse/fpga/amd/scripts/fpga_env.sh"
 fpga_part = "xcu280-fsvh2892-2L-e"
 clock_period = "3.33"
 max_task_opt_retries = 3
@@ -461,9 +455,33 @@ def _write_hls_tcl(mode: str, tcl_path: Path, source_cpp: str, include_dir: str,
 
 
 def _run_hls(tcl_path: Path):
-    run_dir = str(tcl_path.resolve().parent)
+    run_dir = tcl_path.resolve().parent
     tcl_name = tcl_path.name
-    command = f'{hls_setup_command} && cd {shlex.quote(run_dir)} && vitis_hls -f {shlex.quote(tcl_name)}'
+
+    # Vitis HLS calls the system g++ for csim, but the system g++ has LTO
+    # enabled by default which requires liblto_plugin.so — missing on this server.
+    # Create a g++ wrapper that filters out the broken flag.
+    gcc_wrap_dir = run_dir / "gcc_wrap"
+    gcc_wrap_dir.mkdir(exist_ok=True)
+    wrapper = gcc_wrap_dir / "g++"
+    wrapper.write_text(
+        '#!/bin/bash\n'
+        'args=()\n'
+        'for a in "$@"; do\n'
+        '  [[ "$a" == "-fuse-linker-plugin" ]] && continue\n'
+        '  args+=("$a")\n'
+        'done\n'
+        'exec /usr/bin/g++ -fno-lto "${args[@]}"\n',
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+
+    command = (
+        f'{hls_setup_command}'
+        f' && export PATH={shlex.quote(str(gcc_wrap_dir))}:$PATH'
+        f' && cd {shlex.quote(str(run_dir))}'
+        f' && vitis_hls -f {shlex.quote(tcl_name)}'
+    )
     return subprocess.run(
         ["bash", "-lc", command],
         capture_output=True,
