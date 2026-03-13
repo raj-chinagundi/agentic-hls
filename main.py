@@ -160,7 +160,8 @@ def profiling_generate_bottleneck_report_node(state: profiling_agent_state) -> p
 			"{REPORT_CONTENT}", report_content
 		)
 
-		chat_model = ChatOpenAI(model="gpt-4o", temperature=0)
+		# chat_model = ChatOpenAI(model="gpt-4o", temperature=0)
+		chat_model = ChatOpenRouter(model="stepfun/step-3.5-flash:free", temperature=0)
 		response = chat_model.invoke([HumanMessage(content=prompt_complete)])
 		bottleneck_text = response.content if isinstance(response.content, str) else str(response.content)
 
