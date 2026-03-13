@@ -65,8 +65,8 @@ def analysis_report(app, report_content):
     PROMPT_COMPLETE += _CODE_ANALYSIS_PROMPT
     print(PROMPT_COMPLETE)
 
-    #chat_model = ChatOpenAI(model='gpt-4o')
-    chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free',temperature=0)
+    chat_model = ChatOpenAI(model='gpt-4o')
+    #chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free',temperature=0)
     messages = [
         HumanMessage(content=PROMPT_COMPLETE),
     ]
@@ -149,10 +149,11 @@ def task_pipeline_node(state: GraphState) -> GraphState:
         prompt_complete += "\n\nBottleneck analysis report:\n" + bottleneck_content
     prompt_complete += TASK_PIPELINE_STRATEGY_PROMPT_4
 
-    chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
+    chat_model = ChatOpenAI(model='gpt-4o')
+    #chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
     chat_completion = chat_model.invoke([HumanMessage(content=prompt_complete)])
 
-    model_name = "gpt3.5"
+    model_name = "gpt4o"
     cur_time = time.strftime('%y%m%d_%H%M', time.localtime())
 
     pipeline_dir = Path("pipeline") / model_name / app
@@ -261,7 +262,8 @@ def _apply_opt(stage_code: str, stage_opt_list, algo_name: str, func_description
     apply_prompt = apply_prompt.replace("{PRAGMA_DEMO}", pragma_demo_complete)
 
     full_prompt = _SYSTEM_PROMPT + apply_prompt
-    chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
+    chat_model = ChatOpenAI(model='gpt-4o')
+    #chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
     response = chat_model.invoke([HumanMessage(content=full_prompt)])
     response_text = response.content if hasattr(response, "content") else str(response)
     if not isinstance(response_text, str):
@@ -273,7 +275,7 @@ def _apply_opt(stage_code: str, stage_opt_list, algo_name: str, func_description
 def task_opt_node(state: GraphState) -> GraphState:
     algo_name = state["application"]
     func_description = f"{algo_name}"
-    model_name = "gpt-4-1106-preview"
+    model_name = "gpt-4o"
 
     stage_code = _get_latest_pipeline_cpp(algo_name)
     if not stage_code:
