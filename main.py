@@ -354,14 +354,19 @@ def task_opt_node(state: GraphState) -> GraphState:
     }
 
 
-def _write_hls_tcl(mode: str, tcl_path: Path, project_path: Path, source_cpp: str, include_dir: str, top_function: str, tb_cpp: str = ""):
+def _write_hls_tcl(mode: str, tcl_path: Path, source_cpp: str, include_dir: str, top_function: str, tb_cpp: str = ""):
+    # All file paths must be absolute because _run_hls cd's into the tcl dir.
+    # open_project uses a flat name (no slashes allowed).
+    abs_source = str(Path(source_cpp).resolve())
+    abs_include = str(Path(include_dir).resolve())
     lines = [
-        f'open_project -reset {project_path.as_posix()}',
+        'open_project -reset project',
         f'set_top {top_function}',
-        f'add_files {Path(source_cpp).as_posix()} -cflags "-I{Path(include_dir).as_posix()}"',
+        f'add_files {abs_source} -cflags "-I{abs_include}"',
     ]
     if mode == "csim" and tb_cpp:
-        lines.append(f'add_files -tb {Path(tb_cpp).as_posix()} -cflags "-I{Path(include_dir).as_posix()}"')
+        abs_tb = str(Path(tb_cpp).resolve())
+        lines.append(f'add_files -tb {abs_tb} -cflags "-I{abs_include}"')
     lines += [
         'open_solution -reset solution1',
         f'set_part {{{fpga_part}}}',
@@ -376,7 +381,9 @@ def _write_hls_tcl(mode: str, tcl_path: Path, project_path: Path, source_cpp: st
 
 
 def _run_hls(tcl_path: Path):
-    command = f'{hls_setup_command} && vitis_hls -f {shlex.quote(str(tcl_path))}'
+    run_dir = str(tcl_path.resolve().parent)
+    tcl_name = tcl_path.name
+    command = f'{hls_setup_command} && cd {shlex.quote(run_dir)} && vitis_hls -f {shlex.quote(tcl_name)}'
     return subprocess.run(
         ["bash", "-lc", command],
         capture_output=True,
@@ -400,9 +407,8 @@ def csim_node(state: GraphState) -> GraphState:
     run_dir.mkdir(parents=True, exist_ok=True)
     tcl_path = run_dir / "csim.tcl"
     log_path = run_dir / "csim.log"
-    project_path = run_dir / "project"
 
-    _write_hls_tcl("csim", tcl_path, project_path, source_cpp, f"{benchmark_path}/{app_name}", top_function, tb_cpp)
+    _write_hls_tcl("csim", tcl_path, source_cpp, f"{benchmark_path}/{app_name}", top_function, tb_cpp)
     result = _run_hls(tcl_path)
     log_text = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
     log_path.write_text(log_text, encoding="utf-8")
@@ -435,13 +441,14 @@ def csynth_node(state: GraphState) -> GraphState:
     run_dir.mkdir(parents=True, exist_ok=True)
     tcl_path = run_dir / "csynth.tcl"
     log_path = run_dir / "csynth.log"
-    project_path = run_dir / "project"
 
-    _write_hls_tcl("csynth", tcl_path, project_path, source_cpp, f"{benchmark_path}/{app_name}", top_function)
+    _write_hls_tcl("csynth", tcl_path, source_cpp, f"{benchmark_path}/{app_name}", top_function)
     result = _run_hls(tcl_path)
     log_text = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
     log_path.write_text(log_text, encoding="utf-8")
 
+    # project dir is created by vitis_hls inside run_dir (flat name "project")
+    project_path = run_dir / "project"
     report_candidates = list((project_path / "solution1" / "syn" / "report").glob("*_csynth.xml"))
     report_path = str(report_candidates[0]) if report_candidates else ""
     status = "passed" if result.returncode == 0 and report_path else "failed"
