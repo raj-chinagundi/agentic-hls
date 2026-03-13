@@ -20,7 +20,8 @@ from prompts.task_opt_prompt import *
 """ environment set up """
 load_dotenv()
 benchmark_path = "benchmark"
-hls_setup_command = "module load xilinx/vitis-2022.1"
+# hls_setup_command = "module load xilinx/vitis-2022.1"
+hls_setup_command = "module load xilinx/vitis-2022.1 && /data/sse/fpga/amd/scripts/fpga_env.sh"
 fpga_part = "xcu280-fsvh2892-2L-e"
 clock_period = "3.33"
 max_task_opt_retries = 3
@@ -377,8 +378,8 @@ def _write_hls_tcl(mode: str, tcl_path: Path, project_path: Path, source_cpp: st
 def _run_hls(tcl_path: Path):
     # vitis_hls is the HLS compiler binary — it is bundled inside the
     # Vivado 2022.1 installation and is what actually runs csim/csynth.
-    # command = f'{hls_setup_command} && vitis_hls -f {shlex.quote(str(tcl_path))}'
-    command = f'{hls_setup_command} && v++ --tcl {shlex.quote(str(tcl_path))}'
+    command = f'{hls_setup_command} && vitis_hls -f {shlex.quote(str(tcl_path))}'
+    
     return subprocess.run(
         ["bash", "-lc", command],
         capture_output=True,
