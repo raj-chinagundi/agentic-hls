@@ -20,7 +20,13 @@ from prompts.task_opt_prompt import *
 """ environment set up """
 load_dotenv()
 benchmark_path = "benchmark"
-hls_setup_command = "module load xilinx/vitis-2022.1 && /data/sse/fpga/amd/scripts/fpga_env.sh"
+hls_setup_command = (
+    "module load xilinx/vitis-2022.1 && /data/sse/fpga/amd/scripts/fpga_env.sh"
+    " && export __HLS_GCC_WRAP=$(mktemp -d)"
+    ' && printf \'#!/bin/bash\\nexec /usr/bin/g++ -fno-lto "$@"\\n\' > $__HLS_GCC_WRAP/g++'
+    " && chmod +x $__HLS_GCC_WRAP/g++"
+    " && export PATH=$__HLS_GCC_WRAP:$PATH"
+)
 fpga_part = "xcu280-fsvh2892-2L-e"
 clock_period = "3.33"
 max_task_opt_retries = 3
@@ -436,18 +442,18 @@ def _write_hls_tcl(mode: str, tcl_path: Path, source_cpp: str, include_dir: str,
     lines = [
         'open_project -reset project',
         f'set_top {top_function}',
-        f'add_files {abs_source} -cflags "-I{abs_include} -fno-lto"',
+        f'add_files {abs_source} -cflags "-I{abs_include}"',
     ]
     if mode == "csim" and tb_cpp:
         abs_tb = str(Path(tb_cpp).resolve())
-        lines.append(f'add_files -tb {abs_tb} -cflags "-I{abs_include} -fno-lto"')
+        lines.append(f'add_files -tb {abs_tb} -cflags "-I{abs_include}"')
     lines += [
         'open_solution -reset solution1',
         f'set_part {{{fpga_part}}}',
         f'create_clock -period {clock_period} -name default',
     ]
     if mode == "csim":
-        lines.append('csim_design -ldflags "-fno-lto"')
+        lines.append('csim_design')
     else:
         lines.append('csynth_design')
     lines.append('exit')
