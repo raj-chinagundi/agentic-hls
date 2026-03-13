@@ -17,7 +17,10 @@ from dotenv import load_dotenv
 import subprocess
 from pathlib import Path
 from datetime import datetime
+import re
+import time
 from prompts.hw_sw_partition_prompt import SYSTEM_PROMPT, CODE_ANALYSIS_PROMPT
+from prompts.task_pipeline_prompt import TASK_PIPELINE_PROMPT, TASK_PIPELINE_STRATEGY_PROMPT_4
 
 """ enviroment set up """
 load_dotenv()
@@ -99,6 +102,7 @@ class GraphState(TypedDict):
     application: str
     report_content: str
     analysis_result: str
+    pipeline_result: str
 
 
 def generate_report_node(state: GraphState) -> GraphState:
@@ -111,12 +115,56 @@ def analysis_node(state: GraphState) -> GraphState:
     return {**state, "analysis_result": analysis_result}
 
 
+def task_pipeline_node(state: GraphState) -> GraphState:
+    app = state["application"]
+    func_description = f"{app} algorithm"
+
+    _SYSTEM_PROMPT = SYSTEM_PROMPT.replace("{ALGO_NAME}", app)
+    _SYSTEM_PROMPT = _SYSTEM_PROMPT.replace("{FUNCTION_DESCRIPTION}", func_description)
+
+    code_path = f"{benchmark_path}/{app}/{app}.cpp"
+    with open(code_path, "r") as code_file:
+        code_content = "\n" + code_file.read()
+
+    prompt_complete = _SYSTEM_PROMPT + TASK_PIPELINE_PROMPT + code_content
+    prompt_complete += TASK_PIPELINE_STRATEGY_PROMPT_4
+
+    chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
+    chat_completion = chat_model.invoke([HumanMessage(content=prompt_complete)])
+
+    model_name = "gpt3.5"
+    cur_time = time.strftime('%y%m%d_%H%M', time.localtime())
+
+    pipeline_dir = Path("pipeline") / model_name / app
+    pipeline_dir.mkdir(parents=True, exist_ok=True)
+
+    chat_file_path = pipeline_dir / f"pipeline_{model_name}_{app}_{cur_time}.txt"
+    code_file_path = pipeline_dir / f"pipeline_{model_name}_{app}_{cur_time}.cpp"
+
+    chat_text = str(chat_completion)
+    with open(chat_file_path, 'w') as chat_file:
+        chat_file.write(chat_text)
+        chat_file.write("\n\n====================================\n\n")
+        chat_file.write(prompt_complete)
+
+    content = chat_completion.content if isinstance(chat_completion.content, str) else str(chat_completion.content)
+    match = re.search(r"\`\`\`(.*?)\`\`\`", content, re.DOTALL)
+    if match:
+        extracted_code = match.group(1)
+        with open(code_file_path, 'w') as code_file:
+            code_file.write(extracted_code)
+
+    return {**state, "pipeline_result": chat_text}
+
+
 graph = StateGraph(GraphState)
 graph.add_node("generate_report", generate_report_node)
 graph.add_node("analysis", analysis_node)
+graph.add_node("task_pipeline", task_pipeline_node)
 graph.add_edge(START, "generate_report")
 graph.add_edge("generate_report", "analysis")
-graph.add_edge("analysis", END)
+graph.add_edge("analysis", "task_pipeline")
+graph.add_edge("task_pipeline", END)
 app = graph.compile()
 
 
@@ -131,6 +179,7 @@ if __name__ == "__main__":
         "application": "fir",
         "report_content": "",
         "analysis_result": "",
+        "pipeline_result": "",
     }
     result = app.invoke(inputs)
     print(result["analysis_result"])
