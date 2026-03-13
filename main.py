@@ -72,13 +72,17 @@ def analysis_report(app, report_content):
     response = chat_model.invoke(messages)
     print(response)
 
+    response_text = response.content if hasattr(response, "content") else str(response)
+    if not isinstance(response_text, str):
+        response_text = str(response_text)
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     bottleneck_dir = Path("bottleneck_report") / app
     bottleneck_dir.mkdir(parents=True, exist_ok=True)
     bottleneck_path = bottleneck_dir / f"{app}_{timestamp}.txt"
-    bottleneck_path.write_text(str(response), encoding="utf-8")
+    bottleneck_path.write_text(response_text, encoding="utf-8")
 
-    return str(response)
+    return response_text
 
 
 class AutoAnalysisInput(BaseModel):
@@ -126,7 +130,21 @@ def task_pipeline_node(state: GraphState) -> GraphState:
     with open(code_path, "r") as code_file:
         code_content = "\n" + code_file.read()
 
+    bottleneck_content = ""
+    bottleneck_dir = Path("bottleneck_report") / app
+    if bottleneck_dir.exists():
+        bottleneck_files = sorted(
+            bottleneck_dir.glob("*.txt"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if bottleneck_files:
+            with open(bottleneck_files[0], "r") as bottleneck_file:
+                bottleneck_content = bottleneck_file.read()
+
     prompt_complete = _SYSTEM_PROMPT + TASK_PIPELINE_PROMPT + code_content
+    if bottleneck_content:
+        prompt_complete += "\n\nBottleneck analysis report:\n" + bottleneck_content
     prompt_complete += TASK_PIPELINE_STRATEGY_PROMPT_4
 
     chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
