@@ -1,40 +1,10 @@
-from langchain_core.tools import tool
-from langchain_core.tools import StructuredTool
 from typing import Optional, Type, TypedDict, ClassVar
 from pydantic import BaseModel, Field
-from langchain_core.callbacks import (
-    AsyncCallbackManagerForToolRun,
-    CallbackManagerForToolRun,
-)
+from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import StateGraph, START, END
-from langchain_openrouter import ChatOpenRouter
-from dotenv import load_dotenv
-import subprocess
-from pathlib import Path
-from datetime import datetime
-import re
-import time
-from prompts.hw_sw_partition_prompt import SYSTEM_PROMPT, CODE_ANALYSIS_PROMPT
-from langchain_core.tools import tool
-from langchain_core.tools import StructuredTool
-from typing import Optional, Type, TypedDict, ClassVar
-from pydantic import BaseModel, Field
-from langchain_core.callbacks import (
-    AsyncCallbackManagerForToolRun,
-    CallbackManagerForToolRun,
-)
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.tools import BaseTool
-from langgraph.graph import StateGraph, START, END
-from langchain_openrouter import ChatOpenRouter
 from dotenv import load_dotenv
 import subprocess
 from pathlib import Path
@@ -47,13 +17,24 @@ from prompts.hw_sw_partition_prompt import SYSTEM_PROMPT, CODE_ANALYSIS_PROMPT
 from prompts.task_pipeline_prompt import TASK_PIPELINE_PROMPT, TASK_PIPELINE_STRATEGY_PROMPT_4
 from prompts.task_opt_prompt import *
 
-""" enviroment set up """
+""" environment set up """
 load_dotenv()
 benchmark_path = "benchmark"
-vitis_settings_command = "source /packages/apps/fpga/Vitis/2023.2/settings64.sh"
-vitis_part = "xcu280-fsvh2892-2L-e"
-vitis_clock_period = "3.33"
+hls_setup_command = "module load xilinx/vivado-2022.1"
+fpga_part = "xcu280-fsvh2892-2L-e"
+clock_period = "3.33"
 max_task_opt_retries = 3
+
+# LLM config — change provider and model here, nothing else needs to be touched
+llm_provider = "openai"   # "openai" | "openrouter"
+llm_model = "gpt-4o"
+
+
+def _get_chat_model():
+    if llm_provider == "openrouter":
+        from langchain_openrouter import ChatOpenRouter  # type: ignore[import-untyped]
+        return ChatOpenRouter(model=llm_model, temperature=0)
+    return ChatOpenAI(model=llm_model)
 
 
 def _normalize_response_text(response):
@@ -114,8 +95,7 @@ def analysis_report(app, report_content):
     PROMPT_COMPLETE += _CODE_ANALYSIS_PROMPT
     print(PROMPT_COMPLETE)
 
-    #chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
-    chat_model = ChatOpenAI(model='gpt-4o')
+    chat_model = _get_chat_model()
     messages = [
         HumanMessage(content=PROMPT_COMPLETE),
     ]
@@ -144,10 +124,10 @@ class AutoAnalysisTool(BaseTool):
     return_direct: ClassVar[bool] = True
 
     def _run(
-        self, application: str, run_manager: Optional[CallbackManagerForToolRun] = None
+        self, application: str, run_manager: Optional[CallbackManagerForToolRun] = None  # noqa: ARG002
     ) -> str:
         report_content = generate_gprof_report(application)
-        analysis_report(application, report_content)
+        return analysis_report(application, report_content)
 
 
 class GraphState(TypedDict):
@@ -182,10 +162,8 @@ def analysis_node(state: GraphState) -> GraphState:
 
 def task_pipeline_node(state: GraphState) -> GraphState:
     app = state["application"]
-    func_description = f"{app} algorithm"
 
     _SYSTEM_PROMPT = SYSTEM_PROMPT.replace("{ALGO_NAME}", app)
-    _SYSTEM_PROMPT = _SYSTEM_PROMPT.replace("{FUNCTION_DESCRIPTION}", func_description)
 
     code_path = f"{benchmark_path}/{app}/{app}.cpp"
     with open(code_path, "r") as code_file:
@@ -208,18 +186,16 @@ def task_pipeline_node(state: GraphState) -> GraphState:
         prompt_complete += "\n\nBottleneck analysis report:\n" + bottleneck_content
     prompt_complete += TASK_PIPELINE_STRATEGY_PROMPT_4
 
-    #chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
-    chat_model = ChatOpenAI(model='gpt-4o')
+    chat_model = _get_chat_model()
     chat_completion = chat_model.invoke([HumanMessage(content=prompt_complete)])
 
-    model_name = "gpt3.5"
     cur_time = time.strftime('%y%m%d_%H%M', time.localtime())
 
-    pipeline_dir = Path("pipeline") / model_name / app
+    pipeline_dir = Path("pipeline") / llm_model / app
     pipeline_dir.mkdir(parents=True, exist_ok=True)
 
-    chat_file_path = pipeline_dir / f"pipeline_{model_name}_{app}_{cur_time}.txt"
-    code_file_path = pipeline_dir / f"pipeline_{model_name}_{app}_{cur_time}.cpp"
+    chat_file_path = pipeline_dir / f"pipeline_{llm_model}_{app}_{cur_time}.txt"
+    code_file_path = pipeline_dir / f"pipeline_{llm_model}_{app}_{cur_time}.cpp"
 
     chat_text = _normalize_response_text(chat_completion)
     with open(chat_file_path, 'w') as chat_file:
@@ -268,18 +244,17 @@ def _get_latest_stage_opt_cpp_path(app_name: str) -> str:
     return str(latest)
 
 
-def _save_stage_opt_output(completion_type: str, prompt_content: str, response_text: str, model_name: str, algo_name: str):
-    model_tag = "gpt4" if model_name in ["gpt-4-1106-preview", "gpt-4"] else "gpt3.5"
+def _save_stage_opt_output(completion_type: str, prompt_content: str, response_text: str, algo_name: str):
     cur_time = time.strftime('%y%m%d_%H%M', time.localtime())
-    stage_opt_dir = Path("stage_opt") / model_tag / algo_name
+    stage_opt_dir = Path("stage_opt") / llm_model / algo_name
     stage_opt_dir.mkdir(parents=True, exist_ok=True)
 
-    chat_file_path = stage_opt_dir / f"{completion_type}_{model_tag}_{cur_time}.txt"
+    chat_file_path = stage_opt_dir / f"{completion_type}_{llm_model}_{cur_time}.txt"
     chat_file_path.write_text(response_text + "\n\n====================================\n\n" + prompt_content, encoding="utf-8")
 
     code_path = ""
     if completion_type == "opt_apply":
-        code_file_path = stage_opt_dir / f"{completion_type}_{model_tag}_{cur_time}.cpp"
+        code_file_path = stage_opt_dir / f"{completion_type}_{llm_model}_{cur_time}.cpp"
         match = re.search(r"\`\`\`(.*?)\`\`\`", response_text, re.DOTALL)
         if match:
             extracted_code = _strip_markdown_language_tag(match.group(1))
@@ -307,14 +282,13 @@ def _gen_stage_opt_prompt(stage_code: str, csim_error_log: str = "") -> str:
     prompt = OPT_CHOICE_PROMPT.replace("{PRAGMA_DESCRIPTION}", pragma_description)
     prompt = prompt.replace("{STAGE_CODE_CONTENT}", stage_code)
     if csim_error_log:
-        prompt += "\n\nThe exact code above failed Vitis HLS csim. Use the following csim error log to choose pragmas/fixes that preserve functionality:\n"
+        prompt += "\n\nThe exact code above failed HLS csim. Use the following csim error log to choose pragmas/fixes that preserve functionality:\n"
         prompt += csim_error_log
     return prompt
 
 
-def _apply_opt(stage_code: str, stage_opt_list, algo_name: str, func_description: str, model_name: str, csim_error_log: str = ""):
+def _apply_opt(stage_code: str, stage_opt_list, algo_name: str, csim_error_log: str = ""):
     _SYSTEM_PROMPT = SYSTEM_PROMPT.replace("{ALGO_NAME}", algo_name)
-    _SYSTEM_PROMPT = _SYSTEM_PROMPT.replace("{FUNCTION_DESCRIPTION}", func_description)
 
     opt_list_text = ""
     pragma_demo_complete = ""
@@ -328,22 +302,19 @@ def _apply_opt(stage_code: str, stage_opt_list, algo_name: str, func_description
     apply_prompt = apply_prompt.replace("{OPT_LIST}", opt_list_text)
     apply_prompt = apply_prompt.replace("{PRAGMA_DEMO}", pragma_demo_complete)
     if csim_error_log:
-        apply_prompt += "\n\nThe exact code above failed Vitis HLS csim. Fix the code using the following csim error log while preserving the optimization intent:\n"
+        apply_prompt += "\n\nThe exact code above failed HLS csim. Fix the code using the following csim error log while preserving the optimization intent:\n"
         apply_prompt += csim_error_log
 
     full_prompt = _SYSTEM_PROMPT + apply_prompt
-    #chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
-    chat_model = ChatOpenAI(model='gpt-4o')
+    chat_model = _get_chat_model()
     response = chat_model.invoke([HumanMessage(content=full_prompt)])
     response_text = _normalize_response_text(response)
-    code_path = _save_stage_opt_output("opt_apply", full_prompt, response_text, model_name, algo_name)
+    code_path = _save_stage_opt_output("opt_apply", full_prompt, response_text, algo_name)
     return response_text, code_path
 
 
 def task_opt_node(state: GraphState) -> GraphState:
     algo_name = state["application"]
-    func_description = f"{algo_name}"
-    model_name = "gpt-4-1106-preview"
 
     retry_count = state.get("task_opt_retry_count", 0)
     csim_error_log = state.get("csim_log", "") if state.get("csim_status") == "failed" else ""
@@ -361,14 +332,13 @@ def task_opt_node(state: GraphState) -> GraphState:
                 stage_code = ""
 
     choose_prompt = _gen_stage_opt_prompt(stage_code, csim_error_log)
-    #chat_model = ChatOpenRouter(model='stepfun/step-3.5-flash:free', temperature=0)
-    chat_model = ChatOpenAI(model='gpt-4o')
+    chat_model = _get_chat_model()
     choose_response = chat_model.invoke([HumanMessage(content=choose_prompt)])
     choose_text = _normalize_response_text(choose_response)
-    _save_stage_opt_output("opt_choose", choose_prompt, choose_text, model_name, algo_name)
+    _save_stage_opt_output("opt_choose", choose_prompt, choose_text, algo_name)
 
     stage_opt_list = _parse_opt_list(choose_text)
-    apply_text, code_path = _apply_opt(stage_code, stage_opt_list, algo_name, func_description, model_name, csim_error_log)
+    apply_text, code_path = _apply_opt(stage_code, stage_opt_list, algo_name, csim_error_log)
     if not code_path:
         code_path = _get_latest_stage_opt_cpp_path(algo_name)
 
@@ -383,14 +353,18 @@ def task_opt_node(state: GraphState) -> GraphState:
     }
 
 
-def _write_vitis_tcl(mode: str, tcl_path: Path, project_path: Path, source_cpp: str, include_dir: str, top_function: str):
+def _write_hls_tcl(mode: str, tcl_path: Path, project_path: Path, source_cpp: str, include_dir: str, top_function: str, tb_cpp: str = ""):
     lines = [
         f'open_project -reset {project_path.as_posix()}',
         f'set_top {top_function}',
         f'add_files {Path(source_cpp).as_posix()} -cflags "-I{Path(include_dir).as_posix()}"',
+    ]
+    if mode == "csim" and tb_cpp:
+        lines.append(f'add_files -tb {Path(tb_cpp).as_posix()} -cflags "-I{Path(include_dir).as_posix()}"')
+    lines += [
         'open_solution -reset solution1',
-        f'set_part {{{vitis_part}}}',
-        f'create_clock -period {vitis_clock_period} -name default',
+        f'set_part {{{fpga_part}}}',
+        f'create_clock -period {clock_period} -name default',
     ]
     if mode == "csim":
         lines.append('csim_design')
@@ -400,8 +374,10 @@ def _write_vitis_tcl(mode: str, tcl_path: Path, project_path: Path, source_cpp: 
     tcl_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _run_vitis_hls(tcl_path: Path):
-    command = f'{vitis_settings_command} && vitis_hls -f {shlex.quote(str(tcl_path))}'
+def _run_hls(tcl_path: Path):
+    # vitis_hls is the HLS compiler binary — it is bundled inside the
+    # Vivado 2022.1 installation and is what actually runs csim/csynth.
+    command = f'{hls_setup_command} && vitis_hls -f {shlex.quote(str(tcl_path))}'
     return subprocess.run(
         ["bash", "-lc", command],
         capture_output=True,
@@ -415,14 +391,20 @@ def csim_node(state: GraphState) -> GraphState:
     top_function = state["top_function"]
     source_cpp = state.get("task_opt_code_path") or _get_latest_stage_opt_cpp_path(app_name)
 
-    run_dir = Path("vitis_runs") / app_name / run_timestamp / f"csim_retry_{state.get('task_opt_retry_count', 0)}"
+    # Only use a dedicated test bench file (e.g. fir_tb.cpp) — never the original
+    # benchmark source, which defines the same top function and would cause a
+    # duplicate symbol linker error during csim compilation.
+    dedicated_tb = Path(f"{benchmark_path}/{app_name}/{app_name}_tb.cpp")
+    tb_cpp = str(dedicated_tb) if dedicated_tb.exists() else ""
+
+    run_dir = Path("hls_runs") / app_name / run_timestamp / f"csim_retry_{state.get('task_opt_retry_count', 0)}"
     run_dir.mkdir(parents=True, exist_ok=True)
     tcl_path = run_dir / "csim.tcl"
     log_path = run_dir / "csim.log"
     project_path = run_dir / "project"
 
-    _write_vitis_tcl("csim", tcl_path, project_path, source_cpp, f"{benchmark_path}/{app_name}", top_function)
-    result = _run_vitis_hls(tcl_path)
+    _write_hls_tcl("csim", tcl_path, project_path, source_cpp, f"{benchmark_path}/{app_name}", top_function, tb_cpp)
+    result = _run_hls(tcl_path)
     log_text = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
     log_path.write_text(log_text, encoding="utf-8")
 
@@ -450,14 +432,14 @@ def csynth_node(state: GraphState) -> GraphState:
     top_function = state["top_function"]
     source_cpp = state.get("task_opt_code_path") or _get_latest_stage_opt_cpp_path(app_name)
 
-    run_dir = Path("vitis_runs") / app_name / run_timestamp / "csynth"
+    run_dir = Path("hls_runs") / app_name / run_timestamp / "csynth"
     run_dir.mkdir(parents=True, exist_ok=True)
     tcl_path = run_dir / "csynth.tcl"
     log_path = run_dir / "csynth.log"
     project_path = run_dir / "project"
 
-    _write_vitis_tcl("csynth", tcl_path, project_path, source_cpp, f"{benchmark_path}/{app_name}", top_function)
-    result = _run_vitis_hls(tcl_path)
+    _write_hls_tcl("csynth", tcl_path, project_path, source_cpp, f"{benchmark_path}/{app_name}", top_function)
+    result = _run_hls(tcl_path)
     log_text = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
     log_path.write_text(log_text, encoding="utf-8")
 
