@@ -26,8 +26,8 @@ clock_period = "3.33"
 max_task_opt_retries = 3
 
 # LLM config — change provider and model here, nothing else needs to be touched
-llm_provider = "openai"   # "openai" | "openrouter"
-llm_model = "gpt-4o"
+llm_provider = "openrouter"   # "openai" | "openrouter"
+llm_model = "stepfun/step-3.5-flash:free"
 llm_model_safe = re.sub(r'[/:\\"\' ]', "_", llm_model)
 
 
