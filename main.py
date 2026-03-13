@@ -20,7 +20,6 @@ from prompts.task_opt_prompt import *
 """ environment set up """
 load_dotenv()
 benchmark_path = "benchmark"
-# hls_setup_command = "module load xilinx/vitis-2022.1"
 hls_setup_command = "module load xilinx/vitis-2022.1 && /data/sse/fpga/amd/scripts/fpga_env.sh"
 fpga_part = "xcu280-fsvh2892-2L-e"
 clock_period = "3.33"
@@ -29,6 +28,7 @@ max_task_opt_retries = 3
 # LLM config — change provider and model here, nothing else needs to be touched
 llm_provider = "openai"   # "openai" | "openrouter"
 llm_model = "gpt-4o"
+llm_model_safe = re.sub(r'[/:\\"\' ]', "_", llm_model)
 
 
 def _get_chat_model():
@@ -192,11 +192,11 @@ def task_pipeline_node(state: GraphState) -> GraphState:
 
     cur_time = time.strftime('%y%m%d_%H%M', time.localtime())
 
-    pipeline_dir = Path("pipeline") / llm_model / app
+    pipeline_dir = Path("pipeline") / llm_model_safe / app
     pipeline_dir.mkdir(parents=True, exist_ok=True)
 
-    chat_file_path = pipeline_dir / f"pipeline_{llm_model}_{app}_{cur_time}.txt"
-    code_file_path = pipeline_dir / f"pipeline_{llm_model}_{app}_{cur_time}.cpp"
+    chat_file_path = pipeline_dir / f"pipeline_{llm_model_safe}_{app}_{cur_time}.txt"
+    code_file_path = pipeline_dir / f"pipeline_{llm_model_safe}_{app}_{cur_time}.cpp"
 
     chat_text = _normalize_response_text(chat_completion)
     with open(chat_file_path, 'w') as chat_file:
@@ -247,15 +247,15 @@ def _get_latest_stage_opt_cpp_path(app_name: str) -> str:
 
 def _save_stage_opt_output(completion_type: str, prompt_content: str, response_text: str, algo_name: str):
     cur_time = time.strftime('%y%m%d_%H%M', time.localtime())
-    stage_opt_dir = Path("stage_opt") / llm_model / algo_name
+    stage_opt_dir = Path("stage_opt") / llm_model_safe / algo_name
     stage_opt_dir.mkdir(parents=True, exist_ok=True)
 
-    chat_file_path = stage_opt_dir / f"{completion_type}_{llm_model}_{cur_time}.txt"
+    chat_file_path = stage_opt_dir / f"{completion_type}_{llm_model_safe}_{cur_time}.txt"
     chat_file_path.write_text(response_text + "\n\n====================================\n\n" + prompt_content, encoding="utf-8")
 
     code_path = ""
     if completion_type == "opt_apply":
-        code_file_path = stage_opt_dir / f"{completion_type}_{llm_model}_{cur_time}.cpp"
+        code_file_path = stage_opt_dir / f"{completion_type}_{llm_model_safe}_{cur_time}.cpp"
         match = re.search(r"\`\`\`(.*?)\`\`\`", response_text, re.DOTALL)
         if match:
             extracted_code = _strip_markdown_language_tag(match.group(1))
@@ -376,10 +376,7 @@ def _write_hls_tcl(mode: str, tcl_path: Path, project_path: Path, source_cpp: st
 
 
 def _run_hls(tcl_path: Path):
-    # vitis_hls is the HLS compiler binary — it is bundled inside the
-    # Vivado 2022.1 installation and is what actually runs csim/csynth.
     command = f'{hls_setup_command} && vitis_hls -f {shlex.quote(str(tcl_path))}'
-    
     return subprocess.run(
         ["bash", "-lc", command],
         capture_output=True,
