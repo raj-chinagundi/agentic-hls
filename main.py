@@ -377,7 +377,8 @@ def _write_hls_tcl(mode: str, tcl_path: Path, project_path: Path, source_cpp: st
 def _run_hls(tcl_path: Path):
     # vitis_hls is the HLS compiler binary — it is bundled inside the
     # Vivado 2022.1 installation and is what actually runs csim/csynth.
-    command = f'{hls_setup_command} && vitis_hls -f {shlex.quote(str(tcl_path))}'
+    # command = f'{hls_setup_command} && vitis_hls -f {shlex.quote(str(tcl_path))}'
+    command = f'{hls_setup_command} && vitis-run --mode hls --tcl --input_file {shlex.quote(str(tcl_path))}'
     return subprocess.run(
         ["bash", "-lc", command],
         capture_output=True,
