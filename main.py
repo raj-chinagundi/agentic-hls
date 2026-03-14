@@ -64,22 +64,20 @@ def _strip_main_function(code: str) -> str:
     The design file should only contain the synthesizable function.
     main() belongs in the test bench, not the design source.
     """
-    # Match 'int main()' or 'int main(void)' with its entire brace-delimited body
-    pattern = r'\n*\s*int\s+main\s*\([^)]*\)\s*\{' 
+    pattern = r'\n*\s*int\s+main\s*\([^)]*\)\s*\{'
     match = re.search(pattern, code)
     if not match:
         return code
-    # Find the matching closing brace by counting braces
+
     start = match.start()
     brace_count = 0
-    i = match.end() - 1  # position of the opening '{'
+    i = match.end() - 1
     while i < len(code):
         if code[i] == '{':
             brace_count += 1
         elif code[i] == '}':
             brace_count -= 1
             if brace_count == 0:
-                # Remove from start of main to end of closing brace
                 stripped = code[:start].rstrip() + "\n"
                 remaining = code[i + 1:].strip()
                 if remaining:
@@ -428,59 +426,73 @@ def task_opt_node(state: GraphState) -> GraphState:
     }
 
 
-def _write_hls_tcl(mode: str, tcl_path: Path, source_cpp: str, include_dir: str, top_function: str, tb_cpp: str = ""):
-    # All file paths must be absolute because _run_hls cd's into the tcl dir.
-    # open_project uses a flat name (no slashes allowed).
+def _write_hls_tcl(
+    mode: str,
+    tcl_path: Path,
+    source_cpp: str,
+    include_dir: str,
+    top_function: str,
+    tb_cpp: str = "",
+):
+    """
+    Generate a Vitis HLS TCL script.
+
+    Fix:
+    Do not rely on PATH-level g++ wrapping. Vitis HLS is using a bundled g++,
+    so we pass the LTO/plugin workaround directly via csim compile/link flags.
+    """
     abs_source = str(Path(source_cpp).resolve())
     abs_include = str(Path(include_dir).resolve())
+
+    # Synthesis compile flags.
+    synth_cflags = f"-I{abs_include}"
+
+    # C-simulation-only flags to avoid linker plugin / LTO issues.
+    csim_cflags = f"-I{abs_include} -fno-lto -fno-use-linker-plugin"
+    csim_ldflags = "-fno-lto -fno-use-linker-plugin"
+
     lines = [
-        'open_project -reset project',
-        f'set_top {top_function}',
-        f'add_files {abs_source} -cflags "-I{abs_include}"',
+        "open_project -reset project",
+        f"set_top {top_function}",
+        f'add_files {{{abs_source}}} -cflags "{synth_cflags}" -csimflags "{csim_cflags}"',
     ]
+
     if mode == "csim" and tb_cpp:
         abs_tb = str(Path(tb_cpp).resolve())
-        lines.append(f'add_files -tb {abs_tb} -cflags "-I{abs_include}"')
+        lines.append(
+            f'add_files -tb {{{abs_tb}}} -cflags "{synth_cflags}" -csimflags "{csim_cflags}"'
+        )
+
     lines += [
-        'open_solution -reset solution1',
-        f'set_part {{{fpga_part}}}',
-        f'create_clock -period {clock_period} -name default',
+        "open_solution -reset solution1",
+        f"set_part {{{fpga_part}}}",
+        f"create_clock -period {clock_period} -name default",
     ]
+
     if mode == "csim":
-        lines.append('csim_design')
+        lines.append(f'csim_design -clean -ldflags "{csim_ldflags}"')
     else:
-        lines.append('csynth_design')
-    lines.append('exit')
+        lines.append("csynth_design")
+
+    lines.append("exit")
     tcl_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _run_hls(tcl_path: Path):
+    """
+    Run Vitis HLS.
+
+    Fix:
+    Removed the PATH-based g++ wrapper. It does not work because Vitis HLS is
+    resolving its own bundled g++ internally.
+    """
     run_dir = tcl_path.resolve().parent
     tcl_name = tcl_path.name
 
-    # Vitis HLS calls the system g++ for csim, but the system g++ has LTO
-    # enabled by default which requires liblto_plugin.so — missing on this server.
-    # Create a g++ wrapper that filters out the broken flag.
-    gcc_wrap_dir = run_dir / "gcc_wrap"
-    gcc_wrap_dir.mkdir(exist_ok=True)
-    wrapper = gcc_wrap_dir / "g++"
-    wrapper.write_text(
-        '#!/bin/bash\n'
-        'args=()\n'
-        'for a in "$@"; do\n'
-        '  [[ "$a" == "-fuse-linker-plugin" ]] && continue\n'
-        '  args+=("$a")\n'
-        'done\n'
-        'exec /usr/bin/g++ -fno-lto "${args[@]}"\n',
-        encoding="utf-8",
-    )
-    wrapper.chmod(0o755)
-
     command = (
-        f'{hls_setup_command}'
-        f' && export PATH={shlex.quote(str(gcc_wrap_dir))}:$PATH'
-        f' && cd {shlex.quote(str(run_dir))}'
-        f' && vitis_hls -f {shlex.quote(tcl_name)}'
+        f"{hls_setup_command}"
+        f" && cd {shlex.quote(str(run_dir))}"
+        f" && vitis_hls -f {shlex.quote(tcl_name)}"
     )
     return subprocess.run(
         ["bash", "-lc", command],
@@ -501,9 +513,6 @@ def csim_node(state: GraphState) -> GraphState:
     _log("=" * 60)
     _log(f"Source: {source_cpp}")
 
-    # Only use a dedicated test bench file (e.g. fir_tb.cpp) — never the original
-    # benchmark source, which defines the same top function and would cause a
-    # duplicate symbol linker error during csim compilation.
     dedicated_tb = Path(f"{benchmark_path}/{app_name}/{app_name}_tb.cpp")
     tb_cpp = str(dedicated_tb) if dedicated_tb.exists() else ""
     if tb_cpp:
@@ -568,7 +577,6 @@ def csynth_node(state: GraphState) -> GraphState:
     log_text = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
     log_path.write_text(log_text, encoding="utf-8")
 
-    # project dir is created by vitis_hls inside run_dir (flat name "project")
     project_path = run_dir / "project"
     report_candidates = list((project_path / "solution1" / "syn" / "report").glob("*_csynth.xml"))
     report_path = str(report_candidates[0]) if report_candidates else ""
@@ -709,4 +717,4 @@ if __name__ == "__main__":
         print(result["results_summary"])
     elif result.get("csim_log"):
         _log("Final csim log (pipeline ended without synthesis):")
-        print(result["csim_log"][-2000:])  # last 2000 chars only
+        print(result["csim_log"][-2000:])
