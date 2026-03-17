@@ -58,63 +58,23 @@ def _get_or_create_run_timestamp(state: dict) -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-def _parse_top_function_from_gprof(report_text: str) -> str:
-    """Parse gprof call graph to find the function directly called by main().
-    Falls back to highest-%time non-main function from the flat profile."""
-
-    cg_start = report_text.find("Call graph")
-    if cg_start != -1:
-        blocks = re.split(r'-{6,}', report_text[cg_start:])
-        for block in blocks:
-            lines = block.strip().split('\n')
-            main_idx = -1
-            for i, line in enumerate(lines):
-                # Index line starts with [N] and contains 'main'
-                if re.match(r'^\[\d+\]', line.strip()) and re.search(r'\bmain\b', line):
-                    main_idx = i
-                    break
-            if main_idx == -1:
-                continue
-            # Lines after main's index line are its callees
-            callees = []
-            for line in lines[main_idx + 1:]:
-                if not line.strip() or '<' in line:
-                    continue
-                # Callee line ends with: function_name [index]
-                m = re.search(r'(\w+)\s+\[\d+\]\s*$', line)
-                if m:
-                    fname = m.group(1)
-                    if fname != 'main' and not fname.startswith('_'):
-                        callees.append(fname)
-            if not callees:
-                break
-            if len(callees) == 1:
-                return callees[0]
-            # Multiple callees: pick highest % time from flat profile
-            flat_times = _parse_flat_profile_times(report_text)
-            return max(callees, key=lambda f: flat_times.get(f, 0.0))
-
-    # Fallback: highest % time non-main function from flat profile
-    flat_times = _parse_flat_profile_times(report_text)
-    if flat_times:
-        return max(flat_times, key=lambda f: flat_times[f])
-    raise RuntimeError("Could not detect top function from gprof report")
+TOP_FUNCTION_MAP = {
+    "fir":      "fir",
+    "gemm":     "gemm",
+    "stencil":  "stencil",
+    "fft":      "fft",
+    "sort":     "ms_mergesort",
+    "nw":       "needwun",
+    "backprop": "backprop",
+    "bfs":      "bfs",
+    "aes":      "aes256_encrypt_ecb",
+}
 
 
-def _parse_flat_profile_times(report_text: str) -> dict:
-    """Returns {function_name: pct_time} from the gprof flat profile section."""
-    times = {}
-    fp_start = report_text.find("Flat profile")
-    if fp_start == -1:
-        return times
-    for line in report_text[fp_start:].split('\n'):
-        # Each data line: pct_time  cum_secs  self_secs  [calls ...]  name
-        m = re.match(r'^\s*([\d.]+)\s+[\d.]+\s+[\d.]+(?:\s+[\d.]+){0,3}\s+(\w+)\s*$', line)
-        if m:
-            fname = m.group(2)
-            if fname != 'main' and not fname.startswith('_'):
-                times[fname] = float(m.group(1))
-    return times
+def _get_top_function(app: str) -> str:
+    if app not in TOP_FUNCTION_MAP:
+        raise ValueError(f"Unknown application '{app}'. Add it to TOP_FUNCTION_MAP in main.py.")
+    return TOP_FUNCTION_MAP[app]
 
 
 def generate_gprof_report(app, output_file='gprof.txt'):
@@ -215,8 +175,8 @@ class GraphState(TypedDict):
 
 def generate_report_node(state: GraphState) -> GraphState:
     report_content = generate_gprof_report(state["application"])
-    top_function = _parse_top_function_from_gprof(report_content)
-    print(f"[auto-detected top function: {top_function}]")
+    top_function = _get_top_function(state["application"])
+    print(f"[top function: {top_function}]")
     return {**state, "report_content": report_content, "top_function": top_function}
 
 

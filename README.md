@@ -11,7 +11,7 @@ python main.py
 └── enter application name (e.g. "gemm")
 ```
 
-The top function is **auto-detected** from the gprof call graph — the pipeline parses what `main()` directly calls and uses that as the HLS `set_top`. No manual entry needed.
+The top function is looked up from `TOP_FUNCTION_MAP` in `main.py` — no manual entry needed.
 
 ### Pipeline flow
 
@@ -79,7 +79,7 @@ benchmark/fir/fir.cpp
 
 ## Benchmarks
 
-| Benchmark | Enter at prompt | Auto-detected top function |
+| Benchmark | Enter at prompt | Top function (from `TOP_FUNCTION_MAP`) |
 |---|---|---|
 | FIR Filter | `fir` | `fir` |
 | Matrix Multiply (GEMM) | `gemm` | `gemm` |
