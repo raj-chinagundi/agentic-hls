@@ -421,31 +421,57 @@ def task_opt_node(state: GraphState) -> GraphState:
     }
 
 
-def _write_hls_tcl(mode: str, tcl_path: Path, project_path: Path, source_cpp: str, include_dir: str, top_function: str, tb_cpp: str = ""):
+def _write_hls_tcl(
+    mode: str,
+    tcl_path: Path,
+    source_cpp: str,
+    include_dir: str,
+    top_function: str,
+    tb_cpp: str = "",
+):
+    abs_source = str(Path(source_cpp).resolve())
+    abs_include = str(Path(include_dir).resolve())
+
+    synth_cflags = f"-I{abs_include}"
+    csim_cflags = f"-I{abs_include} -fno-lto -fno-use-linker-plugin"
+    csim_ldflags = "-fno-lto -fno-use-linker-plugin"
+
     lines = [
-        f'open_project -reset {project_path.as_posix()}',
-        f'set_top {top_function}',
-        f'add_files {Path(source_cpp).as_posix()} -cflags "-I{Path(include_dir).as_posix()}"',
+        "open_project -reset project",
+        f"set_top {top_function}",
+        f'add_files {{{abs_source}}} -cflags "{synth_cflags}" -csimflags "{csim_cflags}"',
     ]
+
     if mode == "csim" and tb_cpp:
-        lines.append(f'add_files -tb {Path(tb_cpp).as_posix()} -cflags "-I{Path(include_dir).as_posix()}"')
+        abs_tb = str(Path(tb_cpp).resolve())
+        lines.append(
+            f'add_files -tb {{{abs_tb}}} -cflags "{synth_cflags}" -csimflags "{csim_cflags}"'
+        )
+
     lines += [
-        'open_solution -reset solution1',
-        f'set_part {{{fpga_part}}}',
-        f'create_clock -period {clock_period} -name default',
+        "open_solution -reset solution1",
+        f"set_part {{{fpga_part}}}",
+        f"create_clock -period {clock_period} -name default",
     ]
+
     if mode == "csim":
-        lines.append('csim_design')
+        lines.append(f'csim_design -clean -ldflags "{csim_ldflags}"')
     else:
-        lines.append('csynth_design')
-    lines.append('exit')
+        lines.append("csynth_design")
+
+    lines.append("exit")
     tcl_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _run_hls(tcl_path: Path):
-    # vitis_hls is the HLS compiler binary — it is bundled inside the
-    # Vivado 2022.1 installation and is what actually runs csim/csynth.
-    command = f'{hls_setup_command} && vitis_hls -f {shlex.quote(str(tcl_path))}'
+    run_dir = tcl_path.resolve().parent
+    tcl_name = tcl_path.name
+
+    command = (
+        f"{hls_setup_command}"
+        f" && cd {shlex.quote(str(run_dir))}"
+        f" && vitis_hls -f {shlex.quote(tcl_name)}"
+    )
     return subprocess.run(
         ["bash", "-lc", command],
         capture_output=True,
@@ -481,7 +507,7 @@ def csim_node(state: GraphState) -> GraphState:
     log_path = run_dir / "csim.log"
     project_path = run_dir / "project"
 
-    _write_hls_tcl("csim", tcl_path, project_path, source_cpp, f"{benchmark_path}/{app_name}", top_function, tb_cpp)
+    _write_hls_tcl("csim", tcl_path, source_cpp, f"{benchmark_path}/{app_name}", top_function, tb_cpp)
     _log("Running vitis_hls csim (this may take a while)...")
     result = _run_hls(tcl_path)
     log_text = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
@@ -528,7 +554,7 @@ def csynth_node(state: GraphState) -> GraphState:
     log_path = run_dir / "csynth.log"
     project_path = run_dir / "project"
 
-    _write_hls_tcl("csynth", tcl_path, project_path, source_cpp, f"{benchmark_path}/{app_name}", top_function)
+    _write_hls_tcl("csynth", tcl_path, source_cpp, f"{benchmark_path}/{app_name}", top_function)
     _log("Running vitis_hls csynth (this may take several minutes)...")
     result = _run_hls(tcl_path)
     log_text = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
