@@ -8,8 +8,10 @@ An agentic pipeline that takes a C++ benchmark, profiles it, and automatically g
 
 ```
 python main.py
-└── enter top function name (e.g. "fir")
+└── enter application name (e.g. "gemm")
 ```
+
+The top function is **auto-detected** from the gprof call graph — the pipeline parses what `main()` directly calls and uses that as the HLS `set_top`. No manual entry needed.
 
 ### Pipeline flow
 
@@ -77,9 +79,7 @@ benchmark/fir/fir.cpp
 
 ## Benchmarks
 
-To run a benchmark, change `application` in the `inputs` dict at the bottom of `main.py`, then enter the top function name when prompted.
-
-| Benchmark | `application` value | Top function name (enter at prompt) |
+| Benchmark | Enter at prompt | Auto-detected top function |
 |---|---|---|
 | FIR Filter | `fir` | `fir` |
 | Matrix Multiply (GEMM) | `gemm` | `gemm` |
