@@ -586,7 +586,14 @@ if __name__ == "__main__":
         "results_summary": "",
         "run_timestamp": "",
     }
-    result = app.invoke(inputs)
+    result = {}
+    for step in app.stream(inputs, stream_mode="updates"):
+        for node_name, node_output in step.items():
+            print(f"\n{'='*60}")
+            print(f"  COMPLETED: {node_name}")
+            print(f"{'='*60}")
+            result.update(node_output)
+
     if result.get("results_summary"):
         print(result["results_summary"])
     elif result.get("csim_log"):
