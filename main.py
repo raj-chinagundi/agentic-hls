@@ -59,7 +59,11 @@ def _get_or_create_run_timestamp(state: dict) -> str:
 
 
 def generate_gprof_report(app, output_file='gprof.txt'):
-    compile_command = f"g++ -pg -o {benchmark_path}/{app}/{app} {benchmark_path}/{app}/{app}.cpp"
+    tb_path = Path(f"{benchmark_path}/{app}/{app}_tb.cpp")
+    sources = f"{benchmark_path}/{app}/{app}.cpp"
+    if tb_path.exists():
+        sources += f" {tb_path}"
+    compile_command = f"g++ -pg -o {benchmark_path}/{app}/{app} {sources}"
     subprocess.run(compile_command, shell=True, check=True)
 
     run_command = f"./{benchmark_path}/{app}/{app}"

@@ -75,6 +75,24 @@ benchmark/fir/fir.cpp
 
 ---
 
+## Benchmarks
+
+To run a benchmark, change `application` in the `inputs` dict at the bottom of `main.py`, then enter the top function name when prompted.
+
+| Benchmark | `application` value | Top function name (enter at prompt) |
+|---|---|---|
+| FIR Filter | `fir` | `fir` |
+| Matrix Multiply (GEMM) | `gemm` | `gemm` |
+| 2D Stencil | `stencil` | `stencil` |
+| FFT (strided radix-2) | `fft` | `fft` |
+| Merge Sort | `sort` | `ms_mergesort` |
+| Needleman-Wunsch Alignment | `nw` | `needwun` |
+| Backpropagation | `backprop` | `backprop` |
+| BFS (queue-based) | `bfs` | `bfs` |
+| AES-256 ECB | `aes` | `aes256_encrypt_ecb` |
+
+---
+
 ## Config
 
 All tunable settings are at the top of `main.py`:
