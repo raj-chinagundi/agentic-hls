@@ -26,8 +26,9 @@ clock_period = "3.33"
 max_task_opt_retries = 3
 
 # LLM config — change provider and model here, nothing else needs to be touched
-llm_provider = "openai"   # "openai" | "openrouter"
-llm_model = "gpt-4o"
+llm_provider = "openrouter"   # "openai" | "openrouter"
+llm_model = "stepfun/step-3.5-flash:free"
+llm_model_safe = re.sub(r'[^\w\-.]', '_', llm_model)  # safe for use in file/dir names
 
 
 def _get_chat_model():
@@ -216,11 +217,11 @@ def task_pipeline_node(state: GraphState) -> GraphState:
 
     cur_time = time.strftime('%y%m%d_%H%M', time.localtime())
 
-    pipeline_dir = Path("pipeline") / llm_model / app
+    pipeline_dir = Path("pipeline") / llm_model_safe / app
     pipeline_dir.mkdir(parents=True, exist_ok=True)
 
-    chat_file_path = pipeline_dir / f"pipeline_{llm_model}_{app}_{cur_time}.txt"
-    code_file_path = pipeline_dir / f"pipeline_{llm_model}_{app}_{cur_time}.cpp"
+    chat_file_path = pipeline_dir / f"pipeline_{llm_model_safe}_{app}_{cur_time}.txt"
+    code_file_path = pipeline_dir / f"pipeline_{llm_model_safe}_{app}_{cur_time}.cpp"
 
     chat_text = _normalize_response_text(chat_completion)
     with open(chat_file_path, 'w') as chat_file:
@@ -271,15 +272,15 @@ def _get_latest_stage_opt_cpp_path(app_name: str) -> str:
 
 def _save_stage_opt_output(completion_type: str, prompt_content: str, response_text: str, algo_name: str):
     cur_time = time.strftime('%y%m%d_%H%M', time.localtime())
-    stage_opt_dir = Path("stage_opt") / llm_model / algo_name
+    stage_opt_dir = Path("stage_opt") / llm_model_safe / algo_name
     stage_opt_dir.mkdir(parents=True, exist_ok=True)
 
-    chat_file_path = stage_opt_dir / f"{completion_type}_{llm_model}_{cur_time}.txt"
+    chat_file_path = stage_opt_dir / f"{completion_type}_{llm_model_safe}_{cur_time}.txt"
     chat_file_path.write_text(response_text + "\n\n====================================\n\n" + prompt_content, encoding="utf-8")
 
     code_path = ""
     if completion_type == "opt_apply":
-        code_file_path = stage_opt_dir / f"{completion_type}_{llm_model}_{cur_time}.cpp"
+        code_file_path = stage_opt_dir / f"{completion_type}_{llm_model_safe}_{cur_time}.cpp"
         match = re.search(r"\`\`\`(.*?)\`\`\`", response_text, re.DOTALL)
         if match:
             extracted_code = _strip_markdown_language_tag(match.group(1))
