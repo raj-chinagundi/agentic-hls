@@ -31,6 +31,11 @@ llm_model = "stepfun/step-3.5-flash:free"
 llm_model_safe = re.sub(r'[^\w\-.]', '_', llm_model)  # safe for use in file/dir names
 
 
+def _log(msg: str):
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    print(f"[{timestamp}] {msg}", flush=True)
+
+
 def _get_chat_model():
     if llm_provider == "openrouter":
         from langchain_openrouter import ChatOpenRouter  # type: ignore[import-untyped]
@@ -79,6 +84,7 @@ def _get_top_function(app: str) -> str:
 
 
 def generate_gprof_report(app, output_file='gprof.txt'):
+    _log(f"Compiling {app} with profiling flags...")
     tb_path = Path(f"{benchmark_path}/{app}/{app}_tb.cpp")
     sources = f"{benchmark_path}/{app}/{app}.cpp"
     if tb_path.exists():
@@ -86,9 +92,11 @@ def generate_gprof_report(app, output_file='gprof.txt'):
     compile_command = f"g++ -pg -o {benchmark_path}/{app}/{app} {sources}"
     subprocess.run(compile_command, shell=True, check=True)
 
+    _log(f"Running {app} to generate profiling data...")
     run_command = f"./{benchmark_path}/{app}/{app}"
     subprocess.run(run_command, shell=True, check=True)
 
+    _log("Generating gprof report...")
     gprof_command = f"gprof {benchmark_path}/{app}/{app} gmon.out > {benchmark_path}/{app}/{output_file}"
     subprocess.run(gprof_command, shell=True, check=True)
 
@@ -101,6 +109,7 @@ def generate_gprof_report(app, output_file='gprof.txt'):
     profiling_dir.mkdir(parents=True, exist_ok=True)
     profiling_path = profiling_dir / f"{app}_{timestamp}.cpp"
     profiling_path.write_text(report, encoding="utf-8")
+    _log(f"Profiling report saved to {profiling_path}")
 
     return report
 
@@ -117,14 +126,13 @@ def analysis_report(app, report_content):
     _CODE_ANALYSIS_PROMPT = _CODE_ANALYSIS_PROMPT.replace("{REPORT_CONTENT}", report_content)
 
     PROMPT_COMPLETE += _CODE_ANALYSIS_PROMPT
-    print(PROMPT_COMPLETE)
 
+    _log(f"Sending bottleneck analysis to LLM ({llm_model})...")
     chat_model = _get_chat_model()
     messages = [
         HumanMessage(content=PROMPT_COMPLETE),
     ]
     response = chat_model.invoke(messages)
-    print(response)
 
     response_text = _normalize_response_text(response)
 
@@ -133,6 +141,7 @@ def analysis_report(app, report_content):
     bottleneck_dir.mkdir(parents=True, exist_ok=True)
     bottleneck_path = bottleneck_dir / f"{app}_{timestamp}.txt"
     bottleneck_path.write_text(response_text, encoding="utf-8")
+    _log(f"Bottleneck report saved to {bottleneck_path}")
 
     return response_text
 
@@ -175,18 +184,29 @@ class GraphState(TypedDict):
 
 
 def generate_report_node(state: GraphState) -> GraphState:
+    _log("=" * 60)
+    _log("STEP 1/7: GENERATING PROFILING REPORT")
+    _log("=" * 60)
     report_content = generate_gprof_report(state["application"])
     top_function = _get_top_function(state["application"])
-    print(f"[top function: {top_function}]")
+    _log(f"Top function: {top_function}")
+    _log("STEP 1/7: DONE")
     return {**state, "report_content": report_content, "top_function": top_function}
 
 
 def analysis_node(state: GraphState) -> GraphState:
+    _log("=" * 60)
+    _log("STEP 2/7: BOTTLENECK ANALYSIS (LLM)")
+    _log("=" * 60)
     analysis_result = analysis_report(state["application"], state["report_content"])
+    _log("STEP 2/7: DONE")
     return {**state, "analysis_result": analysis_result}
 
 
 def task_pipeline_node(state: GraphState) -> GraphState:
+    _log("=" * 60)
+    _log("STEP 3/7: TASK PIPELINING (LLM)")
+    _log("=" * 60)
     app = state["application"]
 
     _SYSTEM_PROMPT = SYSTEM_PROMPT.replace("{ALGO_NAME}", app)
@@ -212,6 +232,7 @@ def task_pipeline_node(state: GraphState) -> GraphState:
         prompt_complete += "\n\nBottleneck analysis report:\n" + bottleneck_content
     prompt_complete += TASK_PIPELINE_STRATEGY_PROMPT_4
 
+    _log(f"Sending pipeline optimization request to LLM ({llm_model})...")
     chat_model = _get_chat_model()
     chat_completion = chat_model.invoke([HumanMessage(content=prompt_complete)])
 
@@ -234,7 +255,11 @@ def task_pipeline_node(state: GraphState) -> GraphState:
         extracted_code = _strip_markdown_language_tag(match.group(1))
         with open(code_file_path, 'w') as code_file:
             code_file.write(extracted_code)
+        _log(f"Pipelined code saved to {code_file_path}")
+    else:
+        _log("WARNING: No code block found in LLM response")
 
+    _log("STEP 3/7: DONE")
     return {**state, "pipeline_result": chat_text}
 
 
@@ -332,6 +357,7 @@ def _apply_opt(stage_code: str, stage_opt_list, algo_name: str, csim_error_log: 
         apply_prompt += csim_error_log
 
     full_prompt = _SYSTEM_PROMPT + apply_prompt
+    _log(f"Applying {len(stage_opt_list)} optimizations via LLM ({llm_model})...")
     chat_model = _get_chat_model()
     response = chat_model.invoke([HumanMessage(content=full_prompt)])
     response_text = _normalize_response_text(response)
@@ -341,11 +367,18 @@ def _apply_opt(stage_code: str, stage_opt_list, algo_name: str, csim_error_log: 
 
 def task_opt_node(state: GraphState) -> GraphState:
     algo_name = state["application"]
-
     retry_count = state.get("task_opt_retry_count", 0)
     csim_error_log = state.get("csim_log", "") if state.get("csim_status") == "failed" else ""
 
+    _log("=" * 60)
+    if csim_error_log:
+        _log(f"STEP 4/7: TASK OPTIMIZATION (LLM) — RETRY {retry_count + 1}/{max_task_opt_retries}")
+    else:
+        _log("STEP 4/7: TASK OPTIMIZATION (LLM)")
+    _log("=" * 60)
+
     if csim_error_log and state.get("task_opt_code_path"):
+        _log("Reading previous code that failed csim...")
         stage_code = Path(state["task_opt_code_path"]).read_text(encoding="utf-8")
         retry_count += 1
     else:
@@ -357,6 +390,7 @@ def task_opt_node(state: GraphState) -> GraphState:
             else:
                 stage_code = ""
 
+    _log(f"Asking LLM to choose optimization pragmas ({llm_model})...")
     choose_prompt = _gen_stage_opt_prompt(stage_code, csim_error_log)
     chat_model = _get_chat_model()
     choose_response = chat_model.invoke([HumanMessage(content=choose_prompt)])
@@ -364,10 +398,18 @@ def task_opt_node(state: GraphState) -> GraphState:
     _save_stage_opt_output("opt_choose", choose_prompt, choose_text, algo_name)
 
     stage_opt_list = _parse_opt_list(choose_text)
+    _log(f"LLM chose {len(stage_opt_list)} pragmas: {stage_opt_list}")
+
     apply_text, code_path = _apply_opt(stage_code, stage_opt_list, algo_name, csim_error_log)
     if not code_path:
         code_path = _get_latest_stage_opt_cpp_path(algo_name)
 
+    if code_path:
+        _log(f"Optimized code saved to {code_path}")
+    else:
+        _log("WARNING: No optimized code was generated")
+
+    _log("STEP 4/7: DONE")
     return {
         **state,
         "task_opt_result": apply_text,
@@ -416,25 +458,42 @@ def csim_node(state: GraphState) -> GraphState:
     app_name = state["application"]
     top_function = state["top_function"]
     source_cpp = state.get("task_opt_code_path") or _get_latest_stage_opt_cpp_path(app_name)
+    retry = state.get('task_opt_retry_count', 0)
+
+    _log("=" * 60)
+    _log(f"STEP 5/7: C-SIMULATION (vitis_hls csim) — attempt {retry}")
+    _log("=" * 60)
+    _log(f"Source: {source_cpp}")
 
     # Only use a dedicated test bench file (e.g. fir_tb.cpp) — never the original
     # benchmark source, which defines the same top function and would cause a
     # duplicate symbol linker error during csim compilation.
     dedicated_tb = Path(f"{benchmark_path}/{app_name}/{app_name}_tb.cpp")
     tb_cpp = str(dedicated_tb) if dedicated_tb.exists() else ""
+    if tb_cpp:
+        _log(f"Test bench: {tb_cpp}")
+    else:
+        _log("WARNING: No test bench found, csim will run without one")
 
-    run_dir = Path("hls_runs") / app_name / run_timestamp / f"csim_retry_{state.get('task_opt_retry_count', 0)}"
+    run_dir = Path("hls_runs") / app_name / run_timestamp / f"csim_retry_{retry}"
     run_dir.mkdir(parents=True, exist_ok=True)
     tcl_path = run_dir / "csim.tcl"
     log_path = run_dir / "csim.log"
     project_path = run_dir / "project"
 
     _write_hls_tcl("csim", tcl_path, project_path, source_cpp, f"{benchmark_path}/{app_name}", top_function, tb_cpp)
+    _log("Running vitis_hls csim (this may take a while)...")
     result = _run_hls(tcl_path)
     log_text = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
     log_path.write_text(log_text, encoding="utf-8")
 
     status = "passed" if result.returncode == 0 else "failed"
+    _log(f"CSIM RESULT: {status.upper()}")
+    _log(f"Log saved to {log_path}")
+    if status == "failed":
+        _log("CSIM failed — will retry with LLM fix" if retry < max_task_opt_retries else "CSIM failed — max retries reached")
+    _log("STEP 5/7: DONE")
+
     return {
         **state,
         "run_timestamp": run_timestamp,
@@ -458,6 +517,11 @@ def csynth_node(state: GraphState) -> GraphState:
     top_function = state["top_function"]
     source_cpp = state.get("task_opt_code_path") or _get_latest_stage_opt_cpp_path(app_name)
 
+    _log("=" * 60)
+    _log("STEP 6/7: C-SYNTHESIS (vitis_hls csynth)")
+    _log("=" * 60)
+    _log(f"Source: {source_cpp}")
+
     run_dir = Path("hls_runs") / app_name / run_timestamp / "csynth"
     run_dir.mkdir(parents=True, exist_ok=True)
     tcl_path = run_dir / "csynth.tcl"
@@ -465,6 +529,7 @@ def csynth_node(state: GraphState) -> GraphState:
     project_path = run_dir / "project"
 
     _write_hls_tcl("csynth", tcl_path, project_path, source_cpp, f"{benchmark_path}/{app_name}", top_function)
+    _log("Running vitis_hls csynth (this may take several minutes)...")
     result = _run_hls(tcl_path)
     log_text = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
     log_path.write_text(log_text, encoding="utf-8")
@@ -472,6 +537,13 @@ def csynth_node(state: GraphState) -> GraphState:
     report_candidates = list((project_path / "solution1" / "syn" / "report").glob("*_csynth.xml"))
     report_path = str(report_candidates[0]) if report_candidates else ""
     status = "passed" if result.returncode == 0 and report_path else "failed"
+
+    _log(f"CSYNTH RESULT: {status.upper()}")
+    _log(f"Log saved to {log_path}")
+    if report_path:
+        _log(f"Synthesis report: {report_path}")
+    _log("STEP 6/7: DONE")
+
     return {
         **state,
         "run_timestamp": run_timestamp,
@@ -489,6 +561,9 @@ def _xml_tag_text(root, tag_name: str) -> str:
 
 
 def collect_results_node(state: GraphState) -> GraphState:
+    _log("=" * 60)
+    _log("STEP 7/7: COLLECTING RESULTS")
+    _log("=" * 60)
     app_name = state["application"]
     run_timestamp = _get_or_create_run_timestamp(state)
     results_dir = Path("results") / app_name
@@ -523,6 +598,9 @@ def collect_results_node(state: GraphState) -> GraphState:
 
     results_summary = "\n".join(summary_lines)
     results_path.write_text(results_summary, encoding="utf-8")
+    _log(f"Results saved to {results_path}")
+    _log("STEP 7/7: DONE")
+
     return {
         **state,
         "results_path": str(results_path),
@@ -558,15 +636,13 @@ app = graph.compile()
 
 
 if __name__ == "__main__":
-    mytool = AutoAnalysisTool()
-    print(mytool.name)
-    print(mytool.description)
-    print(mytool.args)
-    print(mytool.return_direct)
-
     application = input("Enter application name: ").strip()
     if not application:
         raise ValueError("Application name is required")
+
+    _log("=" * 60)
+    _log(f"STARTING HLS PIPELINE — app={application}, model={llm_model}")
+    _log("=" * 60)
 
     inputs: GraphState = {
         "application": application,
@@ -587,15 +663,13 @@ if __name__ == "__main__":
         "results_summary": "",
         "run_timestamp": "",
     }
-    result = {}
-    for step in app.stream(inputs, stream_mode="updates"):
-        for node_name, node_output in step.items():
-            print(f"\n{'='*60}")
-            print(f"  COMPLETED: {node_name}")
-            print(f"{'='*60}")
-            result.update(node_output)
+    result = app.invoke(inputs)
 
+    _log("=" * 60)
+    _log("PIPELINE COMPLETE")
+    _log("=" * 60)
     if result.get("results_summary"):
         print(result["results_summary"])
     elif result.get("csim_log"):
-        print(result["csim_log"])
+        _log("Final csim log (pipeline ended without synthesis):")
+        print(result["csim_log"][-2000:])
