@@ -1,0 +1,368 @@
+To effectively optimize the BFS algorithm for a CPU-FPGA hybrid platform using task pipelining in HLS, we should divide the algorithm into stages that can be parallelized. This involves examining the given BFS algorithm, identifying loop segments that can operate concurrently on different data sets, and restructuring them into independent functions.
+
+In the BFS algorithm provided, the core operations involve processing nodes in a queue and exploring their neighbors. We will split these operations into multiple functions based on identifiable tasks that can be independently pipelined. The task partitioning strategy will leverage parallelism in traversing and processing graph data.
+
+Here’s a breakdown of how the task pipelining can be approached:
+
+1. **Queue Management:** Handle queue operations separately.
+2. **Process Current Node:** Work on the current node retrieved from the queue.
+3. **Neighbor Processing:** Traverse and update neighbors of the current node.
+
+We'll split the BFS code into distinct stages, each represented by a separate function. The strategy here aligns more with the third example in your guidelines, where the loop is split into multiple stages based on task subdivision.
+
+Here's how we can refactor the code into stages:
+
+```cpp
+#include <stdint.h>
+#include <limits.h>
+
+typedef uint64_t edge_index_t;
+typedef uint64_t node_index_t;
+
+typedef struct {
+    node_index_t dst;
+} edge_t;
+
+typedef struct {
+    edge_index_t edge_begin;
+    edge_index_t edge_end;
+} node_t;
+
+typedef int8_t level_t;
+#define MAX_LEVEL INT8_MAX
+#define SCALE       8
+#define EDGE_FACTOR 16
+#define N_NODES     (1 << SCALE)
+#define N_EDGES     (N_NODES * EDGE_FACTOR)
+#define N_LEVELS    10
+
+void queue_push(node_index_t queue[N_NODES], node_index_t &q_in, node_index_t node) {
+    queue[q_in == 0 ? N_NODES - 1 : q_in - 1] = node;
+    q_in = (q_in + 1) % N_NODES;
+}
+
+node_index_t queue_peek(node_index_t queue[N_NODES], node_index_t q_out) {
+    return queue[q_out];
+}
+
+void queue_pop(node_index_t &q_out) {
+    q_out = (q_out + 1) % N_NODES;
+}
+
+bool queue_empty(node_index_t q_in, node_index_t q_out) {
+    return (q_in > q_out ? q_in == q_out + 1 : (q_in == 0) && (q_out == N_NODES - 1));
+}
+
+void process_node(const node_t nodes[N_NODES], const edge_t edges[N_EDGES], node_index_t n,
+                  level_t level[N_NODES], level_t current_level, edge_index_t level_counts[N_LEVELS],
+                  node_index_t queue[N_NODES], node_index_t &q_in) {
+    edge_index_t tmp_begin = nodes[n].edge_begin;
+    edge_index_t tmp_end = nodes[n].edge_end;
+    
+    for (edge_index_t e = tmp_begin; e < tmp_end; e++) {
+        node_index_t tmp_dst = edges[e].dst;
+        if (level[tmp_dst] == MAX_LEVEL) {
+            level[tmp_dst] = current_level + 1;
+            ++level_counts[current_level + 1];
+            queue_push(queue, q_in, tmp_dst);
+        }
+    }
+}
+
+void bfs(node_t nodes[N_NODES], edge_t edges[N_EDGES],
+         node_index_t starting_node, level_t level[N_NODES],
+         edge_index_t level_counts[N_LEVELS]) {
+    node_index_t queue[N_NODES];
+    node_index_t q_in, q_out;
+    node_index_t dummy;
+    
+    q_in = 1;
+    q_out = 0;
+    
+    // Initialize starting node
+    level[starting_node] = 0;
+    level_counts[0] = 1;
+    queue_push(queue, q_in, starting_node);
+    
+    level_t current_level = 0;
+    
+    loop_queue: for (dummy = 0; dummy < N_NODES; dummy++) {
+        if (queue_empty(q_in, q_out)) {
+            break;
+        }
+
+        node_index_t n = queue_peek(queue, q_out);
+        queue_pop(q_out);
+        
+        process_node(nodes, edges, n, level, current_level, level_counts, queue, q_in);
+        
+        // Check for level completion
+        if (queue_empty(q_in, q_out)) {
+            current_level++;
+        }
+    }
+}
+```
+
+### Explanation:
+
+- **`queue_push`, `queue_peek`, `queue_pop`, `queue_empty`:** Functions for queue management, isolated from the main BFS logic to handle queue operations separately.
+
+- **`process_node`:** The node processing and neighbor traversal have been moved into this function. This part handles reading the node's edges and processing each neighbor. This stage can be parallelized by processing nodes in the current frontier independently.
+
+- **`bfs`:** Top-level function remains, with a streamlined loop_queue focused on managing the queue and orchestrating node processing. As the queue grows/shrinks, the level is incremented once all nodes at the current level have been processed.
+
+The above restructuring modularizes the BFS algorithm's logic into distinct stages that align with the natural data flow. Each function operates independently, contributing to potential task parallelism when implemented in an FPGA.
+
+====================================
+
+
+You are an FPGA engineer and you are designing an accelerator using HLS(high-level-synthesis).
+Here is a software code for bfs. Your goal is to optimize this code to make it work more efficiently on CPU-FPGA hybrid platform.
+
+Dividing the algorithm into multiple stages enables Vivado HLS to generate an implementation method that allows different stages of the algorithm to run on different datasets. This optimization method uses dataflow instructions, called task pipelining, which is very common and suitable for various hardware optimization methods. Please represent each stage with a function, paying attention to the parameter interfaces between the functions.
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+
+// Breadth-First Search using a circular queue
+// Graph: 256 nodes, 4096 edges
+
+#define SCALE       8
+#define EDGE_FACTOR 16
+#define N_NODES     (1 << SCALE)
+#define N_EDGES     (N_NODES * EDGE_FACTOR)
+#define N_LEVELS    10
+
+typedef uint64_t edge_index_t;
+typedef uint64_t node_index_t;
+
+typedef struct {
+    node_index_t dst;
+} edge_t;
+
+typedef struct {
+    edge_index_t edge_begin;
+    edge_index_t edge_end;
+} node_t;
+
+typedef int8_t level_t;
+#define MAX_LEVEL INT8_MAX
+
+#define Q_PUSH(node) { queue[q_in == 0 ? N_NODES - 1 : q_in - 1] = node; q_in = (q_in + 1) % N_NODES; }
+#define Q_PEEK()     (queue[q_out])
+#define Q_POP()      { q_out = (q_out + 1) % N_NODES; }
+#define Q_EMPTY()    (q_in > q_out ? q_in == q_out + 1 : (q_in == 0) && (q_out == N_NODES - 1))
+
+void bfs(node_t nodes[N_NODES], edge_t edges[N_EDGES],
+         node_index_t starting_node, level_t level[N_NODES],
+         edge_index_t level_counts[N_LEVELS]) {
+    node_index_t queue[N_NODES];
+    node_index_t q_in, q_out;
+    node_index_t dummy;
+    node_index_t n;
+    edge_index_t e;
+
+    q_in  = 1;
+    q_out = 0;
+    level[starting_node] = 0;
+    level_counts[0] = 1;
+    Q_PUSH(starting_node);
+
+    loop_queue: for (dummy = 0; dummy < N_NODES; dummy++) {
+        if (Q_EMPTY())
+            break;
+        n = Q_PEEK();
+        Q_POP();
+        edge_index_t tmp_begin = nodes[n].edge_begin;
+        edge_index_t tmp_end   = nodes[n].edge_end;
+        loop_neighbors: for (e = tmp_begin; e < tmp_end; e++) {
+            node_index_t tmp_dst   = edges[e].dst;
+            level_t      tmp_level = level[tmp_dst];
+            if (tmp_level == MAX_LEVEL) {
+                level_t new_level = level[n] + 1;
+                level[tmp_dst] = new_level;
+                ++level_counts[new_level];
+                Q_PUSH(tmp_dst);
+            }
+        }
+    }
+}
+
+
+Bottleneck analysis report:
+To evaluate the performance indicators of the `bfs` function, we need to analyze the provided code and profiling report:
+
+### Execution Time:
+From the profiling report, we observe that the `bfs` function accounted for the entire execution time, as shown in the output from `gprof`. The cumulative and self time is reported as 0.05 seconds.
+
+### Computational Intensity:
+Computational intensity refers to the number of operations (like arithmetic or logical operations) performed per data element. In the `bfs` function, most operations are simple assignments, comparisons, and increment operations which are not computationally intensive. Thus, we evaluate the computational intensity as low.
+
+### Data Intensity:
+Data intensity involves the volume of data being processed or accessed relative to the amount of computation. The `bfs` function reads and writes several elements such as nodes, edges, levels, and queue data frequently, indicating moderate data intensity.
+
+### Parallelism:
+Parallelism indicates the extent to which the function's operations can be performed concurrently. The BFS algorithm inherently involves exploring nodes and their neighbors, often with dependencies based on the graph structure and node exploration order, making it challenging to parallelize. However, certain parts, like neighbor processing after node retrieval from the queue, can be moderately parallelized.
+
+Based on this analysis, here’s the JSON formatted evaluation of the `bfs` function:
+
+```json
+{
+  "bfs": {
+    "execution_time_seconds": 0.05,
+    "computational_intensity_score": 3,
+    "data_intensity_score": 6,
+    "parallelism_score": 4
+  }
+}
+```
+
+### Explanation:
+- **Execution Time**: Based on profiling, the `bfs` function takes 0.05 seconds.
+- **Computational Intensity Score of 3**: Reflects the simplicity of operations in the function.
+- **Data Intensity Score of 6**: Reflects a moderate degree of data read/write operations.
+- **Parallelism Score of 4**: Indicates potential parallelism in specific sections, but overall limited by the sequential nature of BFS.
+
+These insights assist in deciding which parts of the `bfs` function can be effectively accelerated on an FPGA, focusing on parallelizable aspects like edge processing for each node.
+Here are some general suggestions to guide you through the process of partitioning the code for maximizing algorithm parallelism using task pipelining:
+
+1. For loop blocks in the code, you can split them based on the granularity of the loops that can be executed in parallel. First identify what each layer of loop execution is doing, and then divide them according to the granularity that can be parallelized. The following are some examples:
+    - Each iteration of the loop is treated as a stage: 
+    In merge sorting, the original code processes intervals of the same width int each iteration, so intervals of lengths such as 2, 4, and 8 can be considered as one stage respectively.
+
+        // before:
+        for (int width = 1; width < SIZE; width = 2 * width) {
+        merge_arrays:
+            for (int i1 = 0; i1 < SIZE; i1 = i1 + 2 * width) {
+                int i2 = i1 + width;
+                int i3 = i1 + 2 * width;
+                if (i2 >= SIZE) i2 = SIZE;
+                if (i3 >= SIZE) i3 = SIZE;
+                merge(A, i1, i2, i3, temp);
+            }
+        }
+
+        // after:
+        for (int stage = 1; stage < STAGES - 1; stage++) {
+            merge_arrays(temp[stage - 1], width, temp[stage]);
+            width *= 2;
+        }
+
+    - The traversal of the first and second half of the loop is considered as a stage:
+    In histogram statistics, since the first and second halves of the loop can be executed in parallel, they are considered as two stages.
+
+        // before:
+        void histogram(int in[INPUT_SIZE], int hist[VALUE_SIZE]) {
+            int val;
+            for (int i = 0; i < INPUT_SIZE; i++) {
+                val = in[i];
+                hist[val] = hist[val] + 1;
+            }
+        }
+
+        // after:
+        void histogram_parallel(int in1[INPUT_SIZE/2], int in2[INPUT_SIZE/2], int hist[VALUE_SIZE]) {
+            int hist1[VALUE_SIZE];
+            int hist2[VALUE_SIZE];
+
+            histogram_map(in1, hist1);
+            histogram_map(in2, hist2);
+            histogram_reduce(hist1, hist2, hist);
+        }
+
+    - Each layer loop is considered as a stage:
+    In the following BFS algorithm, there are two loops, with the first loop used to find the frontier vertex and read the corresponding rpao data, the second loop used to traverse the neighbors of the frontier vertex, which can be divided into two stages based on this. These two stages can be further divided into multiple stages.
+
+        // before:
+        static void bfs_kernel(
+            char *depth, const int *rpao, const int *ciao, 
+            int  *frontier_size, int vertex_num, const char level, 
+            const char level_plus1
+        ) {
+            int start, end;
+            int ngb_vidx;
+            char ngb_depth;
+            int counter = 0;
+            loop1: for (int i = 0; i < vertex_num; i++) {
+                char d = depth[i];
+                if (d == level) {
+                    counter++;
+                    start = rpao[i];
+                    end = rpao[i + 1];
+                    loop2: for (int j = start; j < end; j++) {
+                        ngb_vidx = ciao[j];
+                        ngb_depth = depth[ngb_vidx];
+                        if (ngb_depth == -1) {
+                            depth[ngb_vidx] = level_plus1;
+                        }
+                    }
+                }
+            }
+            *frontier_size = counter;
+        }
+
+        // after: (Pseudocode representation) read_frontier_vertex() and read_rpao represent loop1, traverse represent loop2
+        void read_frontier_vertex(...) {
+            for (int i = 0; i < vertex_num; i++) {
+                if (d == level) {
+                    frontier_stream << i;
+                }
+            }
+        }
+        void read_rpao(...) {
+            while (!frontier_stream.empty()) {
+                int idx   = frontier_stream.read();
+                int start = rpao[idx];
+                int end   = rpao[idx + 1];
+                start_stream << start;
+                end_stream   << end;
+            }
+        }
+        void traverse() {
+            while (!start_stream.empty() && !end_stream.empty()) {
+                int start = start_stream.read();
+                int end   = end_stream.read();
+                for (int j = start; j < end; j++) {
+                    ngb_vidx = ciao[j];
+                    ngb_depth = depth[ngb_vidx];
+                    if (ngb_depth == -1) {
+                        depth[ngb_vidx] = level_plus1;
+                    }
+                }
+            }
+        }
+
+    - Multiple layers of loops work together to form a stage:
+    In video frame image convolution, there are a total of 4 layers of loops, where loop1 and loop2 are considered as the stages for reading the pixel, and loop3 and loop4 are the stages for calculating the convolution.
+
+        loop1: for(int line = 0; line < img_height; ++line) {
+            loop2: for(int pixel = 0; pixel < img_width; ++pixel) {
+                float sum_r = 0, sum_g = 0, sum_b = 0;
+
+                loop3: for(int m = 0; m < coefficient_size; ++m) {
+                    loop4: for(int n = 0; n < coefficient_size; ++n) {
+                        int ii = line + m - center;
+                        int jj = pixel + n - center;
+                        if(ii >= 0 && ii < img_height && jj >= 0 && jj < img_width) {
+                            sum_r += inFrame[(ii * img_width) + jj].r * coefficient[(m * coefficient_size) + n];
+                            sum_g += inFrame[(ii * img_width) + jj].g * coefficient[(m * coefficient_size) + n];
+                            sum_b += inFrame[(ii * img_width) + jj].b * coefficient[(m * coefficient_size) + n];
+                        }
+                    }
+                }
+                outFrame[line * img_width + pixel].r = fabsf(sum_r);
+                outFrame[line * img_width + pixel].g = fabsf(sum_g);
+                outFrame[line * img_width + pixel].b = fabsf(sum_b);
+            }
+        }
+
+2. For non-loop blocks in the code, they can be split based on the functionality.
+
+Please remember the following rules:
+1. Split the code according to the above guidelines, and when splitting loop blocks, please indicate which of the above four examples the split method refers to.
+2. Represent each stage with a function, and pay attention to the parameter interfaces between the functions.
+3. Do not modify the interface of the top-level function
+4. Divide the code as thoroughly as possible

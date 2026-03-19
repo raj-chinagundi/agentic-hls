@@ -1,0 +1,15 @@
+application: fir
+top_function: fir
+run_timestamp: 20260313_170153
+csim_status: passed
+csynth_status: passed
+estimated_clock_period: 2.291
+best_latency: 10
+worst_latency: 10
+interval_min: 11
+interval_max: 11
+lut: 220
+ff: 564
+bram_18k: 0
+dsp: 3
+report_path: hls_runs/fir/20260313_170153/csynth/project/solution1/syn/report/fir_csynth.xml

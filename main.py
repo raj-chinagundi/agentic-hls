@@ -26,8 +26,9 @@ clock_period = "3.33"
 max_task_opt_retries = 3
 
 # LLM config — change provider and model here, nothing else needs to be touched
-llm_provider = "openrouter"   # "openai" | "openrouter"
-llm_model = "stepfun/step-3.5-flash:free"
+llm_provider = "openai"   # "openai" | "openrouter"
+#llm_model = "stepfun/step-3.5-flash:free"
+llm_model="gpt-4o"
 llm_model_safe = re.sub(r'[^\w\-.]', '_', llm_model)  # safe for use in file/dir names
 
 
@@ -105,7 +106,7 @@ def generate_gprof_report(app, output_file='gprof.txt'):
         report = file.read()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    profiling_dir = Path("profiling_report") / app
+    profiling_dir = Path("logs/profiling_report") / app
     profiling_dir.mkdir(parents=True, exist_ok=True)
     profiling_path = profiling_dir / f"{app}_{timestamp}.cpp"
     profiling_path.write_text(report, encoding="utf-8")
@@ -137,7 +138,7 @@ def analysis_report(app, report_content):
     response_text = _normalize_response_text(response)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    bottleneck_dir = Path("bottleneck_report") / app
+    bottleneck_dir = Path("logs/bottleneck_report") / app
     bottleneck_dir.mkdir(parents=True, exist_ok=True)
     bottleneck_path = bottleneck_dir / f"{app}_{timestamp}.txt"
     bottleneck_path.write_text(response_text, encoding="utf-8")
@@ -216,7 +217,7 @@ def task_pipeline_node(state: GraphState) -> GraphState:
         code_content = "\n" + code_file.read()
 
     bottleneck_content = ""
-    bottleneck_dir = Path("bottleneck_report") / app
+    bottleneck_dir = Path("logs/bottleneck_report") / app
     if bottleneck_dir.exists():
         bottleneck_files = sorted(
             bottleneck_dir.glob("*.txt"),
@@ -285,7 +286,7 @@ def _get_latest_pipeline_cpp(app_name: str) -> str:
 
 
 def _get_latest_stage_opt_cpp_path(app_name: str) -> str:
-    stage_opt_root = Path("stage_opt")
+    stage_opt_root = Path("logs/stage_opt")
     if not stage_opt_root.exists():
         return ""
     candidates = list(stage_opt_root.glob(f"*/{app_name}/opt_apply_*.cpp"))
@@ -297,7 +298,7 @@ def _get_latest_stage_opt_cpp_path(app_name: str) -> str:
 
 def _save_stage_opt_output(completion_type: str, prompt_content: str, response_text: str, algo_name: str):
     cur_time = time.strftime('%y%m%d_%H%M', time.localtime())
-    stage_opt_dir = Path("stage_opt") / llm_model_safe / algo_name
+    stage_opt_dir = Path("logs/stage_opt") / llm_model_safe / algo_name
     stage_opt_dir.mkdir(parents=True, exist_ok=True)
 
     chat_file_path = stage_opt_dir / f"{completion_type}_{llm_model_safe}_{cur_time}.txt"
@@ -501,7 +502,7 @@ def csim_node(state: GraphState) -> GraphState:
     else:
         _log("WARNING: No test bench found, csim will run without one")
 
-    run_dir = Path("hls_runs") / app_name / run_timestamp / f"csim_retry_{retry}"
+    run_dir = Path("logs/hls_runs") / app_name / run_timestamp / f"csim_retry_{retry}"
     run_dir.mkdir(parents=True, exist_ok=True)
     tcl_path = run_dir / "csim.tcl"
     log_path = run_dir / "csim.log"
@@ -548,7 +549,7 @@ def csynth_node(state: GraphState) -> GraphState:
     _log("=" * 60)
     _log(f"Source: {source_cpp}")
 
-    run_dir = Path("hls_runs") / app_name / run_timestamp / "csynth"
+    run_dir = Path("logs/hls_runs") / app_name / run_timestamp / "csynth"
     run_dir.mkdir(parents=True, exist_ok=True)
     tcl_path = run_dir / "csynth.tcl"
     log_path = run_dir / "csynth.log"

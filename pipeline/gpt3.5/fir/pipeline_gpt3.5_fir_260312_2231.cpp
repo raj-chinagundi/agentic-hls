@@ -1,0 +1,40 @@
+#include <stdio.h>
+#include "fir.h"
+
+void shift_delay_line(int delay_lane[NUM_TAPS]) {
+    for (int i = NUM_TAPS - 1; i > 0; i--) {
+        delay_lane[i] = delay_lane[i - 1];
+    }
+}
+
+void insert_input(int input, int delay_lane[NUM_TAPS]) {
+    delay_lane[0] = input;
+}
+
+int compute_fir(int delay_lane[NUM_TAPS], int taps[NUM_TAPS]) {
+    int result = 0;
+    for (int i = 0; i < NUM_TAPS; i++) {
+        result += delay_lane[i] * taps[i];
+    }
+    return result;
+}
+
+void fir(int input, int *output, int taps[NUM_TAPS]) {
+    static int delay_lane[NUM_TAPS] = {};
+
+    shift_delay_line(delay_lane);
+    insert_input(input, delay_lane);
+    *output = compute_fir(delay_lane, taps);
+}
+
+int main() {
+    int taps[NUM_TAPS] = {1, 2, 2, 1};  // simple low-pass coefficients
+    int output;
+
+    for (int i = 0; i < 100000000; i++) {
+        fir(i % 256, &output, taps);
+    }
+
+    printf("Last output: %d\n", output);
+    return 0;
+}

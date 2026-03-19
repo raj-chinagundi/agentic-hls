@@ -1,0 +1,317 @@
+To optimize the `fir` function using task pipelining, you need to break down the function into different stages, with each stage represented as a separate function. This will allow Vivado HLS to exploit parallelism better. Here's how you can partition the code:
+
+### Splitting the Function
+
+In the context of the `fir` function, we'll break it down into three major tasks or stages:
+
+1. **Shift Delay Line Stage**: Moving values along the delay line.
+2. **Update Delay Line Stage**: Updating the first value in the delay line.
+3. **Compute Result Stage**: Calculating the result from the delay line and taps.
+
+We'll restructure the code accordingly.
+
+### Updated Code
+
+```cpp
+#include <stdio.h>
+#include "fir.h"
+
+// Stage 1: Shift Delay Line
+void shift_delay_line(int delay_line[NUM_TAPS]) {
+    for (int i = NUM_TAPS - 1; i > 0; i--) {
+        delay_line[i] = delay_line[i - 1];
+    }
+}
+
+// Stage 2: Update Delay Line
+void update_delay_line(int input, int delay_line[NUM_TAPS]) {
+    delay_line[0] = input;
+}
+
+// Stage 3: Compute Result
+int compute_result(int delay_line[NUM_TAPS], int taps[NUM_TAPS]) {
+    int result = 0;
+    for (int i = 0; i < NUM_TAPS; i++) {
+        result += delay_line[i] * taps[i];
+    }
+    return result;
+}
+
+// Top-level function: FIR filter
+void fir(int input, int *output, int taps[NUM_TAPS]) {
+    static int delay_line[NUM_TAPS] = {};
+
+    // Stage 1: Shift delay line
+    shift_delay_line(delay_line);
+
+    // Stage 2: Update delay line
+    update_delay_line(input, delay_line);
+
+    // Stage 3: Compute result
+    *output = compute_result(delay_line, taps);
+}
+
+int main() {
+    int taps[NUM_TAPS] = {1, 2, 2, 1};  // simple low-pass coefficients
+    int output;
+
+    for (int i = 0; i < 100000000; i++) {
+        fir(i % 256, &output, taps);
+    }
+
+    printf("Last output: %d\n", output);
+    return 0;
+}
+```
+
+### Explanation
+
+- **Shift Delay Line Stage**: Corresponds to the first `for` loop (e.g., "Each iteration of the loop is treated as a stage").
+- **Update Delay Line Stage**: Simply updates the first position in the array, which is independent from other computations.
+- **Compute Result Stage**: Similar to the multiply-accumulate operation, each calculation of `result` is independent within the loop, allowing for parallel computation.
+
+### Benefits
+
+By breaking it into stages, we utilize task-level parallelism, allowing different stages to be executed in parallel. This restructuring caters to streaming or dataflow architectures in FPGA design, making full use of pipeline processing and ultimately achieving higher throughput.
+
+This structure adheres to the stylistic rules and examples presented, particularly the second and third examples, by considering functional separation and transforming sequence operations into parallel ones where feasible.
+
+====================================
+
+
+You are an FPGA engineer and you are designing an accelerator using HLS(high-level-synthesis).
+Here is a software code for fir. Your goal is to optimize this code to make it work more efficiently on CPU-FPGA hybrid platform.
+
+Dividing the algorithm into multiple stages enables Vivado HLS to generate an implementation method that allows different stages of the algorithm to run on different datasets. This optimization method uses dataflow instructions, called task pipelining, which is very common and suitable for various hardware optimization methods. Please represent each stage with a function, paying attention to the parameter interfaces between the functions.
+
+#include <stdio.h>
+#include "fir.h"
+
+void fir(int input, int *output, int taps[NUM_TAPS]) {
+    static int delay_lane[NUM_TAPS] = {};
+
+    int result = 0;
+    for (int i = NUM_TAPS - 1; i > 0; i--) {
+        delay_lane[i] = delay_lane[i - 1];
+    }
+    delay_lane[0] = input;
+
+    for (int i = 0; i < NUM_TAPS; i++) {
+        result += delay_lane[i] * taps[i];
+    }
+
+    *output = result;
+}
+
+
+int main() {
+    int taps[NUM_TAPS] = {1, 2, 2, 1};  // simple low-pass coefficients
+    int output;
+
+    for (int i = 0; i < 100000000; i++) {
+        fir(i % 256, &output, taps);
+    }
+
+    printf("Last output: %d\n", output);
+    return 0;
+}
+
+
+Bottleneck analysis report:
+To analyze the performance indicators for each function based on the provided code content and profiling report, we need to extract and evaluate the following:
+
+1. **Execution Time**: The execution time is extracted from the profiling report, specifically from the "self seconds" column for each function.
+
+2. **Computational Intensity**: This is related to the number of arithmetic operations (such as additions and multiplications) relative to the amount of data processed. A function with high computational intensity performs many operations per datum.
+
+3. **Data Intensity**: This relates to the volume of data loads and stores relative to computational work. High data intensity might indicate significant data movement compared to computation.
+
+4. **Parallelism**: This evaluates the function's potential to be parallelized. A high score suggests that the function contains many independent operations that can run in parallel, ideally suited for acceleration on an FPGA.
+
+Based on the code and profiling report, the analysis for each function (`fir` and `main`) is as follows:
+
+### Analysis
+
+1. **`fir` Function**:
+
+   - **Execution Time**: The `fir` function is the most time-consuming, with a self-execution time of approximately 1.02 seconds (89.56% of total time).
+   
+   - **Computational Intensity**: The function involves a loop where each iteration performs multiple additions and multiplications (scaling each `delay_lane[i]` by `taps[i]`), indicating moderate computational work per datum. Score: 6
+   
+   - **Data Intensity**: Involves reading and writing arrays (`delay_lane` and `taps`) and output, suggesting moderate data movement. Score: 5
+   
+   - **Parallelism**: The `for` loops involve dependencies between iterations (due to data shifting in `delay_lane`), which limits parallelism. However, the multiply-accumulate operation across taps could be parallelized. Score: 4
+
+2. **`main` Function**:
+
+   - **Execution Time**: Main function contributes trivially to execution time with 0.11 seconds.
+   
+   - **Computational Intensity**: The main function primarily acts as a driver to call the `fir` function and itself does not perform significant computational operations. Score: 1
+   
+   - **Data Intensity**: It primarily initializes data and invokes `fir`, which involves low data movement by itself. Score: 2
+   
+   - **Parallelism**: Limited parallelism due to its main role of invoking `fir` in a loop. However, higher-level parallelism through multiple fir invocations could be exploitable. Score: 3
+
+### JSON Result
+
+```json
+{
+  "functions": [
+    {
+      "name": "fir",
+      "execution_time_seconds": 1.02,
+      "computational_intensity_score": 6,
+      "data_intensity_score": 5,
+      "parallelism_score": 4
+    },
+    {
+      "name": "main",
+      "execution_time_seconds": 0.11,
+      "computational_intensity_score": 1,
+      "data_intensity_score": 2,
+      "parallelism_score": 3
+    }
+  ]
+}
+```
+
+This analysis assists in determining which portions of the code are most suitable for hardware acceleration on an FPGA. The `fir` function, being the performance bottleneck with moderate computational and data intensity, is a candidate for optimization and acceleration, particularly focusing on parallelizing its operations wherever possible.
+Here are some general suggestions to guide you through the process of partitioning the code for maximizing algorithm parallelism using task pipelining:
+
+1. For loop blocks in the code, you can split them based on the granularity of the loops that can be executed in parallel. First identify what each layer of loop execution is doing, and then divide them according to the granularity that can be parallelized. The following are some examples:
+    - Each iteration of the loop is treated as a stage: 
+    In merge sorting, the original code processes intervals of the same width int each iteration, so intervals of lengths such as 2, 4, and 8 can be considered as one stage respectively.
+
+        // before:
+        for (int width = 1; width < SIZE; width = 2 * width) {
+        merge_arrays:
+            for (int i1 = 0; i1 < SIZE; i1 = i1 + 2 * width) {
+                int i2 = i1 + width;
+                int i3 = i1 + 2 * width;
+                if (i2 >= SIZE) i2 = SIZE;
+                if (i3 >= SIZE) i3 = SIZE;
+                merge(A, i1, i2, i3, temp);
+            }
+        }
+
+        // after:
+        for (int stage = 1; stage < STAGES - 1; stage++) {
+            merge_arrays(temp[stage - 1], width, temp[stage]);
+            width *= 2;
+        }
+
+    - The traversal of the first and second half of the loop is considered as a stage:
+    In histogram statistics, since the first and second halves of the loop can be executed in parallel, they are considered as two stages.
+
+        // before:
+        void histogram(int in[INPUT_SIZE], int hist[VALUE_SIZE]) {
+            int val;
+            for (int i = 0; i < INPUT_SIZE; i++) {
+                val = in[i];
+                hist[val] = hist[val] + 1;
+            }
+        }
+
+        // after:
+        void histogram_parallel(int in1[INPUT_SIZE/2], int in2[INPUT_SIZE/2], int hist[VALUE_SIZE]) {
+            int hist1[VALUE_SIZE];
+            int hist2[VALUE_SIZE];
+
+            histogram_map(in1, hist1);
+            histogram_map(in2, hist2);
+            histogram_reduce(hist1, hist2, hist);
+        }
+
+    - Each layer loop is considered as a stage:
+    In the following BFS algorithm, there are two loops, with the first loop used to find the frontier vertex and read the corresponding rpao data, the second loop used to traverse the neighbors of the frontier vertex, which can be divided into two stages based on this. These two stages can be further divided into multiple stages.
+
+        // before:
+        static void bfs_kernel(
+            char *depth, const int *rpao, const int *ciao, 
+            int  *frontier_size, int vertex_num, const char level, 
+            const char level_plus1
+        ) {
+            int start, end;
+            int ngb_vidx;
+            char ngb_depth;
+            int counter = 0;
+            loop1: for (int i = 0; i < vertex_num; i++) {
+                char d = depth[i];
+                if (d == level) {
+                    counter++;
+                    start = rpao[i];
+                    end = rpao[i + 1];
+                    loop2: for (int j = start; j < end; j++) {
+                        ngb_vidx = ciao[j];
+                        ngb_depth = depth[ngb_vidx];
+                        if (ngb_depth == -1) {
+                            depth[ngb_vidx] = level_plus1;
+                        }
+                    }
+                }
+            }
+            *frontier_size = counter;
+        }
+
+        // after: (Pseudocode representation) read_frontier_vertex() and read_rpao represent loop1, traverse represent loop2
+        void read_frontier_vertex(...) {
+            for (int i = 0; i < vertex_num; i++) {
+                if (d == level) {
+                    frontier_stream << i;
+                }
+            }
+        }
+        void read_rpao(...) {
+            while (!frontier_stream.empty()) {
+                int idx   = frontier_stream.read();
+                int start = rpao[idx];
+                int end   = rpao[idx + 1];
+                start_stream << start;
+                end_stream   << end;
+            }
+        }
+        void traverse() {
+            while (!start_stream.empty() && !end_stream.empty()) {
+                int start = start_stream.read();
+                int end   = end_stream.read();
+                for (int j = start; j < end; j++) {
+                    ngb_vidx = ciao[j];
+                    ngb_depth = depth[ngb_vidx];
+                    if (ngb_depth == -1) {
+                        depth[ngb_vidx] = level_plus1;
+                    }
+                }
+            }
+        }
+
+    - Multiple layers of loops work together to form a stage:
+    In video frame image convolution, there are a total of 4 layers of loops, where loop1 and loop2 are considered as the stages for reading the pixel, and loop3 and loop4 are the stages for calculating the convolution.
+
+        loop1: for(int line = 0; line < img_height; ++line) {
+            loop2: for(int pixel = 0; pixel < img_width; ++pixel) {
+                float sum_r = 0, sum_g = 0, sum_b = 0;
+
+                loop3: for(int m = 0; m < coefficient_size; ++m) {
+                    loop4: for(int n = 0; n < coefficient_size; ++n) {
+                        int ii = line + m - center;
+                        int jj = pixel + n - center;
+                        if(ii >= 0 && ii < img_height && jj >= 0 && jj < img_width) {
+                            sum_r += inFrame[(ii * img_width) + jj].r * coefficient[(m * coefficient_size) + n];
+                            sum_g += inFrame[(ii * img_width) + jj].g * coefficient[(m * coefficient_size) + n];
+                            sum_b += inFrame[(ii * img_width) + jj].b * coefficient[(m * coefficient_size) + n];
+                        }
+                    }
+                }
+                outFrame[line * img_width + pixel].r = fabsf(sum_r);
+                outFrame[line * img_width + pixel].g = fabsf(sum_g);
+                outFrame[line * img_width + pixel].b = fabsf(sum_b);
+            }
+        }
+
+2. For non-loop blocks in the code, they can be split based on the functionality.
+
+Please remember the following rules:
+1. Split the code according to the above guidelines, and when splitting loop blocks, please indicate which of the above four examples the split method refers to.
+2. Represent each stage with a function, and pay attention to the parameter interfaces between the functions.
+3. Do not modify the interface of the top-level function
+4. Divide the code as thoroughly as possible
